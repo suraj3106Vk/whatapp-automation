@@ -115,6 +115,26 @@ function delay(min, max) {
 async function init(socketIO) {
   io = socketIO;
 
+  // Clean up any leftover Chrome lock files (Railway persistent volume issue)
+  const fs = require('fs');
+  const authPath = path.join(__dirname, '../../.wwebjs_auth');
+  try {
+    const singletonLocks = [
+      path.join(authPath, 'SingletonLock'),
+      path.join(authPath, 'SingletonSocket'),
+      path.join(authPath, 'session-sk-agent', 'SingletonLock'),
+      path.join(authPath, 'session-sk-agent', 'SingletonSocket'),
+    ];
+    for (const lockFile of singletonLocks) {
+      if (fs.existsSync(lockFile)) {
+        fs.unlinkSync(lockFile);
+        console.log(`[WhatsApp] Removed stale lock: ${lockFile}`);
+      }
+    }
+  } catch (err) {
+    console.warn('[WhatsApp] Could not clean lock files:', err.message);
+  }
+
   client = new Client({
     authStrategy: new LocalAuth({
       dataPath: path.join(__dirname, '../../.wwebjs_auth'),
@@ -150,6 +170,13 @@ async function init(socketIO) {
         // Required for restricted container environments (Docker, k8s)
         '--disable-seccomp-filter-sandbox',
         '--disable-namespace-sandbox',
+        // Fix for "Can't open display" error in Railway/Docker
+        '--disable-dev-shm-usage',
+        '--disable-software-rasterizer',
+        '--disable-extensions',
+        // Fix for "Profile in use" error
+        '--user-data-dir=/tmp/chrome-user-data',
+        '--disable-features=ChromeWhatsNewUI',
       ],
       timeout: 120000,  // give Chrome 120s to launch (slow systems)
     },

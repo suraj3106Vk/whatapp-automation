@@ -5,8 +5,8 @@
   command = "npm run build"
   publish = "dist"
 
-# Environment variables set in Netlify dashboard:
-# VITE_API_URL = https://sk-agent-backend.onrender.com   ← your Render URL
+# IMPORTANT: Set this in Netlify Dashboard > Site Settings > Environment Variables
+# VITE_API_URL = https://sk-agent-backend-production.up.railway.app
 
 [build.environment]
   NODE_VERSION = "20"
