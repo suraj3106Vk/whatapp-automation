@@ -1,7 +1,7 @@
 # ── SK Agent — Render-ready Dockerfile ────────────────────────────────────────
 FROM node:20-bookworm-slim
 
-# Install Chromium + dependencies
+# Install Chromium + dependencies + network tools for WhatsApp connectivity
 RUN apt-get update && apt-get install -y --fix-missing \
     chromium \
     fonts-liberation \
@@ -36,6 +36,8 @@ RUN apt-get update && apt-get install -y --fix-missing \
     libxtst6 \
     ca-certificates \
     wget \
+    dnsutils \
+    iputils-ping \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 

@@ -1,8 +1,7 @@
 import axios from 'axios'
 
-// Local dev  → Vite proxy handles /api → localhost:3001
-// Netlify    → VITE_API_URL=https://your-service.onrender.com
-const API_URL = import.meta.env.VITE_API_URL || 'https://whatapp-automation-8erc.onrender.com'
+// Local development API endpoint
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 const BASE = `${API_URL}/api`
 
 const SOCKET_URL = API_URL

@@ -17,13 +17,11 @@ const routes = require('./api/routes');
 
 const PORT = process.env.PORT || 3001;
 
-// Accept localhost (dev) + any Netlify domain + custom FRONTEND_URL env var
+// Local development origins
 const ORIGINS = [
   'http://localhost:5173',
   'http://localhost:3000',
   'http://127.0.0.1:5173',
-  /^https:\/\/.*\.netlify\.app$/,        // any Netlify preview/prod URL
-  /^https:\/\/.*\.onrender\.com$/,       // Render preview URLs
   process.env.FRONTEND_URL,              // custom domain if set
 ].filter(Boolean);
 
@@ -78,43 +76,3 @@ start().catch(err => {
   console.error('[Server] Fatal error:', err);
   process.exit(1);
 });
-
-// ── Self-ping keepalive (prevents Render free tier from sleeping) ─────────────
-// Pings own /health endpoint every 10-12 minutes (Render sleeps after 15 min)
-const RENDER_URL = process.env.RENDER_EXTERNAL_URL || process.env.SELF_URL || null;
-
-if (RENDER_URL) {
-  const https = require('https');
-  const http = require('http');
-
-  function selfPing() {
-    const url = `${RENDER_URL}/health`;
-    const lib = url.startsWith('https') ? https : http;
-    const req = lib.get(url, (res) => {
-      console.log(`[Keepalive] Ping → ${url} — ${res.statusCode}`);
-    });
-    req.on('error', (err) => {
-      console.warn(`[Keepalive] Ping failed: ${err.message}`);
-    });
-    req.end();
-  }
-
-  // Random interval between 10–12 minutes so it doesn't look like a bot pattern
-  function scheduleNextPing() {
-    const ms = (10 + Math.random() * 2) * 60 * 1000; // 10–12 min in ms
-    setTimeout(() => {
-      selfPing();
-      scheduleNextPing();
-    }, ms);
-  }
-
-  // First ping after 2 min (let server fully boot first)
-  setTimeout(() => {
-    selfPing();
-    scheduleNextPing();
-  }, 2 * 60 * 1000);
-
-  console.log(`[Keepalive] Self-ping active → ${RENDER_URL}/health every 10–12 min`);
-} else {
-  console.log('[Keepalive] RENDER_EXTERNAL_URL not set — self-ping disabled (local mode)');
-}

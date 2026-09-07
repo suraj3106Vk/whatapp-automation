@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { io } from 'socket.io-client'
 
-// Local dev  → connect to localhost:3001
-// Netlify    → connect to VITE_API_URL (Render backend)
-const SOCKET_URL = import.meta.env.VITE_API_URL || 'https://whatapp-automation-8erc.onrender.com'
+// Local development socket connection
+const SOCKET_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
 export function useSocket() {
   const socketRef = useRef(null)

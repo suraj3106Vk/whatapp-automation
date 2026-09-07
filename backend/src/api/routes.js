@@ -46,7 +46,7 @@ router.get('/status', (req, res) => {
   res.json({ success: true, ...state });
 });
 
-// ── QR page — open in browser to scan (useful on Render where no terminal UI) ──
+// ── QR page — open in browser to scan ──
 router.get('/qr-page', async (req, res) => {
   const state = whatsapp.getState();
   if (state.state === 'ready') {
@@ -63,7 +63,7 @@ router.get('/qr-page', async (req, res) => {
       <p>State: <b style="color:#f90">${state.state}</b></p>
       <p style="color:#aaa;font-size:13px">This page auto-refreshes every 3 seconds.</p>
       <p style="color:#aaa;font-size:13px">If state stays "disconnected" for more than 60s,<br>
-      check Render Logs for Chrome/Puppeteer errors.</p>
+      check backend logs for Chrome/Puppeteer errors.</p>
       <hr style="border-color:#333;margin:30px auto;width:300px">
       <p style="font-size:12px;color:#555">
         Debug: <a href="/health" style="color:#25D366">/health</a> &nbsp;|&nbsp; 

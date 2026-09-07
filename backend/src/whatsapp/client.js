@@ -17,14 +17,14 @@ const { analyzeMedia } = require('../agent/llmService');
 const OWNER_NAME = process.env.OWNER_NAME || 'Suraj Zalke';
 const OWNER_SHORT_NAME = process.env.OWNER_SHORT_NAME || 'Suraj';
 // Local Windows  → Chrome from Program Files
-// Render/Linux   → system Chromium installed by Dockerfile (PUPPETEER_EXECUTABLE_PATH)
+// Linux          → system Chromium (installed via apt/yum)
 // Auto-detect order: env var → Linux system paths → Windows default
 function getChromePath() {
   // 1. Explicit env override (Dockerfile sets PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium)
   if (process.env.PUPPETEER_EXECUTABLE_PATH) {
     return process.env.PUPPETEER_EXECUTABLE_PATH;
   }
-  // 2. Linux system Chromium paths (Render / Ubuntu / Debian)
+  // 2. Linux system Chromium paths (Ubuntu / Debian / CentOS)
   const fs = require('fs');
   const linuxPaths = [
     '/usr/bin/chromium',
@@ -147,13 +147,13 @@ async function init(socketIO) {
         '--disable-crash-reporter',
         '--no-crash-upload',
         '--disable-logging',
-        // Required for restricted container environments (Render, Docker, k8s)
+        // Required for restricted container environments (Docker, k8s)
         '--disable-seccomp-filter-sandbox',
         '--disable-namespace-sandbox',
       ],
-      timeout: 120000,  // give Chrome 120s to launch (Render cold start is slow)
+      timeout: 120000,  // give Chrome 120s to launch (slow systems)
     },
-    // Increase timeouts so slow Render network doesn't cause scan failures
+    // Increase timeouts for slower connections/systems
     authTimeoutMs: 300000,   // wait up to 5 min for QR scan confirmation
     qrMaxRetries: 30,        // keep generating replacement QR codes for longer
     webVersionCache: { type: 'local' },
@@ -248,7 +248,7 @@ async function init(socketIO) {
   console.log('[WhatsApp] Initializing client...');
   console.log(`[WhatsApp] Chrome path: ${CHROME_PATH}`);
 
-  // Retry loop — Render cold starts can be slow; Chrome may fail first attempt
+  // Retry loop — helps with slow system startups
   let attempts = 0;
   async function tryInit() {
     if (initializeInProgress || clientState === 'ready') return;
