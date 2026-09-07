@@ -2,11 +2,11 @@
 
 [build]
   base    = "frontend"
-  command = "npm run build"
+  command = "npm install && npm run build"
   publish = "dist"
 
 # IMPORTANT: Set this in Netlify Dashboard > Site Settings > Environment Variables
-# VITE_API_URL = https://sk-agent-backend-production.up.railway.app
+# VITE_API_URL = https://whatapp-automation-production.up.railway.app
 
 [build.environment]
   NODE_VERSION = "20"
