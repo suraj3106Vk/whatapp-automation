@@ -248,6 +248,18 @@ async function init(socketIO) {
   console.log('[WhatsApp] Initializing client...');
   console.log(`[WhatsApp] Chrome path: ${CHROME_PATH}`);
 
+  // Ensure auth directory exists with proper permissions (Railway volume fix)
+  const fs = require('fs');
+  const authPath = path.join(__dirname, '../../.wwebjs_auth');
+  try {
+    if (!fs.existsSync(authPath)) {
+      fs.mkdirSync(authPath, { recursive: true, mode: 0o755 });
+      console.log('[WhatsApp] Created .wwebjs_auth directory');
+    }
+  } catch (err) {
+    console.warn('[WhatsApp] Could not pre-create auth dir:', err.message);
+  }
+
   // Retry loop — helps with slow system startups
   let attempts = 0;
   async function tryInit() {

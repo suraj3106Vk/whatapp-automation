@@ -57,10 +57,12 @@ RUN npm ci --omit=dev
 
 COPY backend/src ./src
 
-# Give node user ownership of the app
-RUN chown -R node:node /app
+# Create directories that need write access and set permissions
+RUN mkdir -p /app/.wwebjs_auth /app/uploads \
+    && chown -R node:node /app
 
 # Switch to built-in node user (has proper home dir, no permission issues)
+# Note: On Railway, volumes may override permissions - create dirs at runtime if needed
 USER node
 
 EXPOSE 3001
