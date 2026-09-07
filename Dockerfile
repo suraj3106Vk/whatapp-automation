@@ -44,6 +44,7 @@ RUN apt-get update && apt-get install -y --fix-missing \
 # Use system Chromium, skip Puppeteer's own download
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV DISPLAY=:99
 
 # Create crash-reporter temp dir and give node user access
 # The built-in 'node' user (uid 1000) from node:bookworm-slim is the right user

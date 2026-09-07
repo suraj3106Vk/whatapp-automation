@@ -256,8 +256,14 @@ async function init(socketIO) {
       fs.mkdirSync(authPath, { recursive: true, mode: 0o755 });
       console.log('[WhatsApp] Created .wwebjs_auth directory');
     }
+    // Clean up stale lockfiles that prevent Chrome from starting
+    const lockfile = path.join(authPath, 'session-sk-agent', 'SingletonLock');
+    if (fs.existsSync(lockfile)) {
+      fs.unlinkSync(lockfile);
+      console.log('[WhatsApp] Removed stale Chrome lockfile');
+    }
   } catch (err) {
-    console.warn('[WhatsApp] Could not pre-create auth dir:', err.message);
+    console.warn('[WhatsApp] Cleanup warning:', err.message);
   }
 
   // Retry loop — helps with slow system startups
