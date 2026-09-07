@@ -46,6 +46,21 @@ router.get('/status', (req, res) => {
   res.json({ success: true, ...state });
 });
 
+// ── Test endpoint - check if client can send messages ──
+router.get('/test-send', async (req, res) => {
+  const { to } = req.query;
+  if (!to) {
+    return res.status(400).json({ success: false, error: 'Provide ?to=phone_number' });
+  }
+  try {
+    const chatId = to.includes('@') ? to : `${to}@c.us`;
+    await whatsapp.sendMessage(chatId, '🤖 Test message from SK Agent - I am alive!');
+    res.json({ success: true, message: 'Test message sent', to: chatId });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ── Direct QR image (PNG) ──
 router.get('/qr.png', async (req, res) => {
   const qrPath = path.join(__dirname, '../../qr-code.png');

@@ -301,10 +301,12 @@ async function init(socketIO) {
 
   // ── Message events ─────────────────────────────────────────────────────────
   client.on('message', async (msg) => {
+    console.log(`[WhatsApp] 'message' event fired - from: ${msg.from}, type: ${msg.type || 'unknown'}, fromMe: ${msg.fromMe}`);
     await handleIncomingMessage(msg);
   });
 
   client.on('message_create', async (msg) => {
+    console.log(`[WhatsApp] 'message_create' event fired - from: ${msg.from}, type: ${msg.type || 'unknown'}, fromMe: ${msg.fromMe}`);
     if (!msg.fromMe) await handleIncomingMessage(msg);
   });
 
