@@ -121,7 +121,7 @@ async function init(socketIO) {
       clientId: 'sk-agent',
     }),
     puppeteer: {
-      headless: 'new',  // Use new headless mode (Chromium 112+)
+      headless: true,
       executablePath: CHROME_PATH,
       args: [
         '--no-sandbox',
@@ -150,8 +150,6 @@ async function init(socketIO) {
         // Required for restricted container environments (Docker, k8s)
         '--disable-seccomp-filter-sandbox',
         '--disable-namespace-sandbox',
-        // Fix for display issues in headless containers
-        '--no-xshm',
       ],
       timeout: 120000,  // give Chrome 120s to launch (slow systems)
     },
@@ -258,14 +256,8 @@ async function init(socketIO) {
       fs.mkdirSync(authPath, { recursive: true, mode: 0o755 });
       console.log('[WhatsApp] Created .wwebjs_auth directory');
     }
-    // Clean up stale lockfiles that prevent Chrome from starting
-    const lockfile = path.join(authPath, 'session-sk-agent', 'SingletonLock');
-    if (fs.existsSync(lockfile)) {
-      fs.unlinkSync(lockfile);
-      console.log('[WhatsApp] Removed stale Chrome lockfile');
-    }
   } catch (err) {
-    console.warn('[WhatsApp] Cleanup warning:', err.message);
+    console.warn('[WhatsApp] Could not pre-create auth dir:', err.message);
   }
 
   // Retry loop — helps with slow system startups
