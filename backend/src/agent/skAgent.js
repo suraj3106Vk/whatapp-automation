@@ -280,7 +280,7 @@ async function processMessage(chatId, senderName, message) {
     }
   }
 
-  // ── Post-process task: FORCE routing based on keywords ─────────────────────
+  // ── Post-process task: FORCE routing based on keywords ─────────────────────////
   if (taskAction) {
     // Sanitize description/message so LLM doesn't leak old sender names like "sangitahmaske"
     if (mentionsOwner && !saysSelfRemind) {
