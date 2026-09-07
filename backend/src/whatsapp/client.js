@@ -163,12 +163,50 @@ async function init(socketIO) {
   client.on('qr', async (qr) => {
     clientState = 'qr';
     currentQR = qr;
-    console.log('\n[WhatsApp] Scan QR code to login:');
-    qrcodeTerminal.generate(qr, { small: true });
+    
+    console.log('\n\n' + '='.repeat(60));
+    console.log('           🔐 WHATSAPP QR CODE - SCAN TO LOGIN');
+    console.log('='.repeat(60) + '\n');
+    
+    // Generate LARGE terminal QR (easier to scan)
+    qrcodeTerminal.generate(qr, { small: false });
+    
+    console.log('\n' + '='.repeat(60));
+    console.log('  📱 Open WhatsApp > Menu > Linked Devices > Link a Device');
+    console.log('  ⏱️  QR expires in ~60 seconds - new one generates automatically');
+    console.log('  🌐 Or open frontend dashboard to see QR in browser');
+    console.log('='.repeat(60) + '\n');
+    
     try {
-      const qrBase64 = await qrcode.toDataURL(qr);
+      // Generate base64 QR for frontend
+      const qrBase64 = await qrcode.toDataURL(qr, {
+        errorCorrectionLevel: 'M',
+        margin: 2,
+        width: 300,
+        color: {
+          dark: '#000000',
+          light: '#FFFFFF'
+        }
+      });
+      
+      // Also save QR as PNG file for easy access
+      const fs = require('fs');
+      const qrPath = path.join(__dirname, '../../qr-code.png');
+      await qrcode.toFile(qrPath, qr, {
+        errorCorrectionLevel: 'M',
+        margin: 2,
+        width: 400,
+        color: {
+          dark: '#000000',
+          light: '#FFFFFF'
+        }
+      });
+      console.log(`[WhatsApp] QR code saved to: ${qrPath}`);
+      console.log('[WhatsApp] You can open this file to scan the QR code!\n');
+      
       if (io) io.emit('qr', { qr, qrBase64 });
-    } catch {
+    } catch (err) {
+      console.error('[WhatsApp] QR generation error:', err.message);
       if (io) io.emit('qr', { qr, qrBase64: null });
     }
   });

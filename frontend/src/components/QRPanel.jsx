@@ -39,20 +39,39 @@ export default function QRPanel({ status, qrData }) {
   }
 
   if (status.state === 'qr' && qrData) {
+    const downloadQR = () => {
+      if (!qrData.qrBase64) return
+      const link = document.createElement('a')
+      link.href = qrData.qrBase64
+      link.download = 'whatsapp-qr-code.png'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+    }
+
     return (
       <div className="card flex flex-col md:flex-row items-center gap-8 py-6">
         {/* QR Image */}
         <div className="shrink-0">
           {qrData.qrBase64 ? (
-            <div className="p-3 bg-white rounded-2xl shadow-lg">
-              <img
-                src={qrData.qrBase64}
-                alt="WhatsApp QR Code"
-                className="w-52 h-52"
-              />
+            <div className="flex flex-col items-center gap-3">
+              <div className="p-4 bg-white rounded-2xl shadow-2xl">
+                <img
+                  src={qrData.qrBase64}
+                  alt="WhatsApp QR Code"
+                  className="w-64 h-64 md:w-72 md:h-72"
+                />
+              </div>
+              <button
+                onClick={downloadQR}
+                className="btn-ghost text-xs flex items-center gap-2"
+              >
+                <QrCode size={14} />
+                Download QR Code
+              </button>
             </div>
           ) : (
-            <div className="w-52 h-52 bg-gray-800 rounded-2xl flex items-center justify-center">
+            <div className="w-64 h-64 md:w-72 md:h-72 bg-gray-800 rounded-2xl flex items-center justify-center">
               <QrCode size={48} className="text-gray-600" />
             </div>
           )}
@@ -60,13 +79,14 @@ export default function QRPanel({ status, qrData }) {
 
         {/* Instructions */}
         <div className="flex-1">
-          <h3 className="text-xl font-bold text-white mb-3">Scan to Login</h3>
+          <h3 className="text-xl font-bold text-white mb-3">🔐 Scan to Login</h3>
           <ol className="space-y-3">
             {[
               'Open WhatsApp on your phone',
-              'Tap Menu (⋮) → Linked Devices',
+              'Tap Menu (⋮) or Settings',
+              'Tap "Linked Devices"',
               'Tap "Link a Device"',
-              'Point your phone at the QR code',
+              'Point your phone camera at this QR code',
             ].map((step, i) => (
               <li key={i} className="flex items-start gap-3 text-sm text-gray-300">
                 <span className="w-6 h-6 bg-whatsapp-green rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">
@@ -78,7 +98,12 @@ export default function QRPanel({ status, qrData }) {
           </ol>
           <div className="mt-4 p-3 bg-yellow-900/20 border border-yellow-700/30 rounded-xl">
             <p className="text-yellow-300 text-xs">
-              ⚠️ QR code expires in ~60 seconds. If it expires, a new one will appear automatically.
+              ⚠️ QR code expires in ~60 seconds. A new one will appear automatically if it expires.
+            </p>
+          </div>
+          <div className="mt-3 p-3 bg-blue-900/20 border border-blue-700/30 rounded-xl">
+            <p className="text-blue-300 text-xs">
+              💡 Tip: If the QR code is too small to scan, click "Download QR Code" and open the image on a larger screen.
             </p>
           </div>
         </div>

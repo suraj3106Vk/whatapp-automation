@@ -81,51 +81,232 @@ router.get('/qr-page', async (req, res) => {
 
   res.send(`<!DOCTYPE html><html>
   <head>
-    <title>SK Agent — Scan QR</title>
+    <title>SK Agent — Scan QR Code</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-      body { background:#111; color:#fff; font-family:sans-serif; text-align:center; padding:30px; margin:0; }
-      .qr-wrap { display:inline-block; background:white; padding:16px; border-radius:16px; margin:20px auto; }
-      img  { display:block; width:320px; height:320px; }
-      h2   { color:#25D366; margin-bottom:6px; }
-      p    { color:#aaa; font-size:14px; margin:6px 0; }
-      .tip { background:#1a3a1a; border:1px solid #25D366; border-radius:8px; padding:12px; margin:16px auto; max-width:400px; font-size:13px; color:#cfc; }
-      .refresh-bar { width:100%; max-width:400px; height:4px; background:#333; border-radius:2px; margin:10px auto; overflow:hidden; }
-      .refresh-fill { height:4px; background:#25D366; width:100%; transition:width .2s linear; }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { 
+        background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 100%);
+        color: #fff; 
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        text-align: center; 
+        padding: 20px; 
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .container {
+        max-width: 600px;
+        width: 100%;
+      }
+      .header {
+        margin-bottom: 2rem;
+      }
+      h1 { 
+        color: #25D366; 
+        font-size: 2.5rem; 
+        margin-bottom: 0.5rem;
+        font-weight: 700;
+      }
+      .subtitle {
+        color: #aaa; 
+        font-size: 1.1rem;
+      }
+      .qr-container {
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 24px;
+        padding: 2rem;
+        margin: 2rem 0;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      }
+      .qr-wrap { 
+        display: inline-block; 
+        background: white; 
+        padding: 20px; 
+        border-radius: 20px; 
+        margin: 0 auto;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+      }
+      img { 
+        display: block; 
+        width: 320px; 
+        height: 320px;
+        max-width: 100%;
+        height: auto;
+      }
+      .instructions {
+        background: rgba(37, 211, 102, 0.1);
+        border: 1px solid rgba(37, 211, 102, 0.3);
+        border-radius: 16px;
+        padding: 1.5rem;
+        margin: 1.5rem 0;
+        text-align: left;
+      }
+      .instructions h3 {
+        color: #25D366;
+        margin-bottom: 1rem;
+        font-size: 1.2rem;
+      }
+      .instructions ol {
+        padding-left: 1.5rem;
+        line-height: 2;
+        color: #ddd;
+      }
+      .instructions li {
+        margin-bottom: 0.5rem;
+      }
+      .instructions strong {
+        color: #25D366;
+      }
+      .tip { 
+        background: rgba(255, 193, 7, 0.1);
+        border: 1px solid rgba(255, 193, 7, 0.3);
+        border-radius: 12px; 
+        padding: 1rem; 
+        margin: 1rem 0;
+        font-size: 0.9rem; 
+        color: #ffc107;
+      }
+      .refresh-bar { 
+        width: 100%; 
+        max-width: 400px; 
+        height: 4px; 
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 2px; 
+        margin: 1rem auto;
+        overflow: hidden;
+      }
+      .refresh-fill { 
+        height: 4px; 
+        background: #25D366; 
+        width: 100%; 
+        transition: width 0.2s linear;
+      }
+      #refresh-text {
+        font-size: 0.85rem;
+        color: #666;
+        margin-top: 0.5rem;
+      }
+      .download-btn {
+        display: inline-block;
+        margin-top: 1rem;
+        padding: 0.75rem 1.5rem;
+        background: rgba(37, 211, 102, 0.2);
+        border: 1px solid #25D366;
+        border-radius: 10px;
+        color: #25D366;
+        text-decoration: none;
+        font-weight: 600;
+        transition: all 0.2s;
+        cursor: pointer;
+      }
+      .download-btn:hover {
+        background: #25D366;
+        color: white;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(37, 211, 102, 0.3);
+      }
+      @media (max-width: 600px) {
+        h1 { font-size: 2rem; }
+        .qr-wrap { padding: 12px; }
+        img { width: 280px; height: 280px; }
+      }
     </style>
   </head>
   <body>
-    <h2>📱 Scan QR to Connect WhatsApp</h2>
-    <p>Open WhatsApp → ⋮ Menu → Linked Devices → Link a Device</p>
-    <div class="qr-wrap">
-      ${qrBase64 ? `<img src="${qrBase64}" alt="QR Code"/>` : '<p style="color:red;padding:20px">QR generation failed — refreshing...</p>'}
+    <div class="container">
+      <div class="header">
+        <h1>🔐 WhatsApp Login</h1>
+        <p class="subtitle">SK Agent — Scan QR Code</p>
+      </div>
+
+      <div class="qr-container">
+        <div class="qr-wrap">
+          ${qrBase64 ? `<img src="${qrBase64}" alt="WhatsApp QR Code" id="qr-image"/>` : '<p style="color:red;padding:20px">QR generation failed — refreshing...</p>'}
+        </div>
+        ${qrBase64 ? '<a href="#" class="download-btn" id="download-btn">📥 Download QR Code</a>' : ''}
+      </div>
+
+      <div class="instructions">
+        <h3>📱 How to scan:</h3>
+        <ol>
+          <li>Open <strong>WhatsApp</strong> on your phone</li>
+          <li>Tap <strong>Menu (⋮)</strong> or <strong>Settings</strong></li>
+          <li>Tap <strong>Linked Devices</strong></li>
+          <li>Tap <strong>Link a Device</strong></li>
+          <li>Point your camera at the QR code above</li>
+        </ol>
+      </div>
+
+      <div class="tip">
+        ⚠️ <strong>Important:</strong> QR code expires in ~60 seconds. 
+        This page will auto-refresh with a new code if it expires.
+      </div>
+
+      <div class="refresh-bar">
+        <div id="refresh-fill" class="refresh-fill"></div>
+      </div>
+      <p id="refresh-text">Checking for updates...</p>
     </div>
-    <div class="refresh-bar"><div id="refresh-fill" class="refresh-fill"></div></div>
-    <p id="refresh-text" style="font-size:12px;color:#666">Checking for a new QR...</p>
-    <div class="tip">
-      ⚡ <b>Tip:</b> After scanning, wait up to 30 seconds for confirmation.<br>
-      If it fails, this page will show a new QR automatically. You have up to 5 minutes to connect.
-    </div>
+
     <script>
       const pageQr = ${JSON.stringify(state.qr)};
       let seconds = 8;
+      
+      // Download QR code
+      const downloadBtn = document.getElementById('download-btn');
+      if (downloadBtn) {
+        downloadBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          const img = document.getElementById('qr-image');
+          const link = document.createElement('a');
+          link.href = img.src;
+          link.download = 'whatsapp-qr-code.png';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        });
+      }
+
+      // Check for new QR or connection
       async function refreshQr() {
         try {
           const response = await fetch('/api/status', { cache: 'no-store' });
           const state = await response.json();
           if (state.state === 'ready') {
-            document.body.innerHTML = '<h2 style="color:#25D366;margin-top:80px">WhatsApp connected</h2><p>SK Agent is online and listening for messages.</p>';
+            document.body.innerHTML = \`
+              <div style="text-align:center;margin-top:100px">
+                <h1 style="color:#25D366;font-size:3rem;margin-bottom:1rem">✅</h1>
+                <h2 style="color:#25D366">WhatsApp Connected!</h2>
+                <p style="color:#aaa;margin-top:1rem">SK Agent is online and listening for messages.</p>
+                <p style="color:#666;margin-top:2rem;font-size:0.9rem">You can close this page now.</p>
+              </div>
+            \`;
             return;
           }
-          if (state.state === 'qr' && state.qr && state.qr !== pageQr) window.location.reload();
-        } catch {}
+          if (state.state === 'qr' && state.qr && state.qr !== pageQr) {
+            window.location.reload();
+          }
+        } catch (err) {
+          console.error('Status check failed:', err);
+        }
       }
+
+      // Progress bar countdown
       setInterval(() => {
         seconds = seconds <= 1 ? 8 : seconds - 1;
         document.getElementById('refresh-fill').style.width = (seconds / 8 * 100) + '%';
-        document.getElementById('refresh-text').textContent = 'Checking for a new QR in ' + seconds + 's';
+        document.getElementById('refresh-text').textContent = 'Checking for updates in ' + seconds + 's';
       }, 1000);
+
+      // Check status every 2 seconds
       setInterval(refreshQr, 2000);
+      
+      // Initial check
+      refreshQr();
     </script>
   </body></html>`);
 });
