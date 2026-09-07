@@ -121,7 +121,7 @@ async function init(socketIO) {
       clientId: 'sk-agent',
     }),
     puppeteer: {
-      headless: true,
+      headless: 'new',  // Use new headless mode (Chromium 112+)
       executablePath: CHROME_PATH,
       args: [
         '--no-sandbox',
@@ -150,6 +150,8 @@ async function init(socketIO) {
         // Required for restricted container environments (Docker, k8s)
         '--disable-seccomp-filter-sandbox',
         '--disable-namespace-sandbox',
+        // Fix for display issues in headless containers
+        '--no-xshm',
       ],
       timeout: 120000,  // give Chrome 120s to launch (slow systems)
     },
