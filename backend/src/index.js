@@ -76,3 +76,45 @@ start().catch(err => {
   console.error('[Server] Fatal error:', err);
   process.exit(1);
 });
+
+// ── Self-ping keepalive (Railway/cloud hosting) ────────────────────────────────
+// Prevents free tier from sleeping after inactivity
+const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN 
+  ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` 
+  : process.env.SELF_URL || null;
+
+if (RAILWAY_URL) {
+  const https = require('https');
+  const http = require('http');
+
+  function selfPing() {
+    const url = `${RAILWAY_URL}/health`;
+    const lib = url.startsWith('https') ? https : http;
+    const req = lib.get(url, (res) => {
+      console.log(`[Keepalive] Ping → ${url} — ${res.statusCode}`);
+    });
+    req.on('error', (err) => {
+      console.warn(`[Keepalive] Ping failed: ${err.message}`);
+    });
+    req.end();
+  }
+
+  // Random interval between 10–12 minutes
+  function scheduleNextPing() {
+    const ms = (10 + Math.random() * 2) * 60 * 1000; // 10–12 min
+    setTimeout(() => {
+      selfPing();
+      scheduleNextPing();
+    }, ms);
+  }
+
+  // First ping after 2 min (let server fully boot)
+  setTimeout(() => {
+    selfPing();
+    scheduleNextPing();
+  }, 2 * 60 * 1000);
+
+  console.log(`[Keepalive] Self-ping active → ${RAILWAY_URL}/health every 10–12 min`);
+} else {
+  console.log('[Keepalive] No public URL set — self-ping disabled (local mode)');
+}
