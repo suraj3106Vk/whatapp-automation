@@ -61,9 +61,10 @@ COPY backend/src ./src
 RUN mkdir -p /app/.wwebjs_auth /app/uploads \
     && chown -R node:node /app
 
-# Switch to built-in node user (has proper home dir, no permission issues)
-# Note: On Railway, volumes may override permissions - create dirs at runtime if needed
-USER node
+# Railway volumes are mounted as root, so we need to run as root for write access
+# In production cloud environments, this is acceptable for containers
+# Local dev still works fine with node user
+USER root
 
 EXPOSE 3001
 CMD ["node", "src/index.js"]
