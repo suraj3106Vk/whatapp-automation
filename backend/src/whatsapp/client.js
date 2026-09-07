@@ -7,6 +7,7 @@ const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
 const qrcodeTerminal = require('qrcode-terminal');
 const path = require('path');
+const fs = require('fs');
 
 const skAgent = require('../agent/skAgent');
 const fileManager = require('../files/fileManager');
@@ -25,7 +26,6 @@ function getChromePath() {
     return process.env.PUPPETEER_EXECUTABLE_PATH;
   }
   // 2. Linux system Chromium paths (Ubuntu / Debian / CentOS)
-  const fs = require('fs');
   const linuxPaths = [
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
@@ -116,7 +116,6 @@ async function init(socketIO) {
   io = socketIO;
 
   // Clean up any leftover Chrome lock files (Railway persistent volume issue)
-  const fs = require('fs');
   const authPath = path.join(__dirname, '../../.wwebjs_auth');
   try {
     const singletonLocks = [
@@ -217,7 +216,6 @@ async function init(socketIO) {
       });
       
       // Also save QR as PNG file for easy access
-      const fs = require('fs');
       const qrPath = path.join(__dirname, '../../qr-code.png');
       await qrcode.toFile(qrPath, qr, {
         errorCorrectionLevel: 'M',
@@ -314,8 +312,6 @@ async function init(socketIO) {
   console.log(`[WhatsApp] Chrome path: ${CHROME_PATH}`);
 
   // Ensure auth directory exists with proper permissions (Railway volume fix)
-  const fs = require('fs');
-  const authPath = path.join(__dirname, '../../.wwebjs_auth');
   try {
     if (!fs.existsSync(authPath)) {
       fs.mkdirSync(authPath, { recursive: true, mode: 0o755 });
