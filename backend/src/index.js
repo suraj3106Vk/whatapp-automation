@@ -17,13 +17,15 @@ const routes = require('./api/routes');
 
 const PORT = process.env.PORT || 3001;
 
-// Local development origins
+// Allowed origins for CORS
 const ORIGINS = [
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost:3000',
   'http://127.0.0.1:5173',
   'http://127.0.0.1:5174',
+  'https://whatapp.netlify.app',         // Netlify production
+  'http://whatapp.netlify.app',
   process.env.FRONTEND_URL,              // custom domain if set
 ].filter(Boolean);
 
