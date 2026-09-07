@@ -46,6 +46,16 @@ router.get('/status', (req, res) => {
   res.json({ success: true, ...state });
 });
 
+// ── Direct QR image (PNG) ──
+router.get('/qr.png', async (req, res) => {
+  const qrPath = path.join(__dirname, '../../qr-code.png');
+  if (fs.existsSync(qrPath)) {
+    res.sendFile(qrPath);
+  } else {
+    res.status(404).send('QR code not generated yet');
+  }
+});
+
 // ── QR page — open in browser to scan ──
 router.get('/qr-page', async (req, res) => {
   const state = whatsapp.getState();
