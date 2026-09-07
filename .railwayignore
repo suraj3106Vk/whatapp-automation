@@ -1,0 +1,11 @@
+﻿# Railway Ignore File - exclude unnecessary files from deployment
+frontend/
+.git/
+.vscode/
+*.md
+!README.md
+.env.example
+node_modules/
+.wwebjs_auth/
+uploads/
+*.log
