@@ -30,6 +30,7 @@ let reconnectTimer;
 let reconnectAttempt = 0;
 let state = 'disconnected';
 let qr = null;
+let qrBase64 = null;
 let ownerChatId = null;
 let messageLog = [];
 let schedulerBound = false;
@@ -50,6 +51,7 @@ function getState() {
   return {
     state,
     qr,
+    qrBase64,
     owner: ownerChatId ? { name: OWNER_NAME, shortName: OWNER_SHORT_NAME, chatId: ownerChatId } : null,
   };
 }
@@ -71,6 +73,14 @@ function updateSettings(next) {
   if (io) io.emit('settings_updated', getSettings());
 }
 function normalizeJid(id) { return id.includes('@') ? id : `${id.replace(/\D/g, '')}@s.whatsapp.net`; }
+async function emitQr(nextQr) {
+  qr = nextQr;
+  state = 'qr';
+  qrBase64 = await qrcode.toDataURL(nextQr, { margin: 2, width: 420 });
+  qrcode.toFile(path.join(__dirname, '../../qr-code.png'), nextQr).catch(() => {});
+  qrcodeTerminal.generate(nextQr, { small: true });
+  if (io) io.emit('qr', { qr: nextQr, qrBase64 });
+}
 function textOf(message) {
   const content = message.message || {};
   return (content.conversation || content.extendedTextMessage?.text || content.imageMessage?.caption || content.videoMessage?.caption || content.documentMessage?.caption || '').trim();
@@ -162,8 +172,8 @@ async function startSocket() {
     socket.ev.on('messages.upsert', ({ messages, type }) => { if (type === 'notify') messages.forEach(item => handleIncoming(item).catch(error => logger.error({ err: error.message }, 'message handler failed'))); });
     socket.ev.on('connection.update', update => {
       const { connection, lastDisconnect, qr: nextQr } = update;
-      if (nextQr) { qr = nextQr; state = 'qr'; qrcode.toFile(path.join(__dirname, '../../qr-code.png'), nextQr).catch(() => {}); qrcodeTerminal.generate(nextQr, { small: true }); if (io) io.emit('qr', { qr: nextQr }); }
-      if (connection === 'open') { state = 'ready'; qr = null; reconnectAttempt = 0; ownerChatId = socket.user?.id || null; if (ownerChatId) skAgent.setOwnerConfig({ name: OWNER_NAME, shortName: OWNER_SHORT_NAME, chatId: ownerChatId }); if (io) io.emit('status', getState()); logger.info({ user: ownerChatId }, 'WhatsApp connected'); }
+      if (nextQr) emitQr(nextQr).catch(error => logger.error({ err: error.message }, 'QR generation failed'));
+      if (connection === 'open') { state = 'ready'; qr = null; qrBase64 = null; reconnectAttempt = 0; ownerChatId = socket.user?.id || null; if (ownerChatId) skAgent.setOwnerConfig({ name: OWNER_NAME, shortName: OWNER_SHORT_NAME, chatId: ownerChatId }); if (io) io.emit('status', getState()); logger.info({ user: ownerChatId }, 'WhatsApp connected'); }
       if (connection === 'close') { const error = lastDisconnect?.error; socket = null; state = isLoggedOut(error) ? 'logged_out' : 'disconnected'; if (!isLoggedOut(error)) { const delay = getDelay(reconnectAttempt++); state = 'reconnecting'; reconnectTimer = setTimeout(() => { reconnectTimer = null; startSocket().catch(() => {}); }, delay); logger.warn({ delay, reason: error?.message }, 'WhatsApp reconnect scheduled'); } if (io) io.emit('status', getState()); }
     });
   } finally { starting = false; }

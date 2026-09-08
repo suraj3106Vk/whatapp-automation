@@ -27,15 +27,27 @@ const ORIGINS = [
   'http://127.0.0.1:5174',
   'https://whatapp.netlify.app',         // Netlify production
   'http://whatapp.netlify.app',
+  'https://whatappai.netlify.app',       // Current Netlify production
+  'http://whatappai.netlify.app',
   process.env.FRONTEND_URL,              // custom domain if set
 ].filter(Boolean);
+
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  return ORIGINS.includes(origin) || /^https:\/\/[a-z0-9-]+\.netlify\.app$/i.test(origin);
+}
+
+const corsOptions = {
+  origin: (origin, callback) => callback(null, isAllowedOrigin(origin) ? origin || true : false),
+  credentials: true,
+};
 
 const app = express();
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  cors: { 
-    origin: ORIGINS, 
+  cors: {
+    origin: (origin, callback) => callback(null, isAllowedOrigin(origin) ? origin || true : false),
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -50,12 +62,13 @@ io.on('connection', (socket) => {
   console.log('[Socket.IO] Dashboard connected:', socket.id);
   const state = whatsapp.getState();
   socket.emit('status', { state: state.state, qr: state.qr });
+  if (state.qr && state.qrBase64) socket.emit('qr', { qr: state.qr, qrBase64: state.qrBase64 });
   socket.emit('message_log', whatsapp.getMessageLog());
   socket.on('disconnect', () => console.log('[Socket.IO] Dashboard disconnected:', socket.id));
   socket.on('ping', () => socket.emit('pong'));
 });
 
-app.use(cors({ origin: ORIGINS }));
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
