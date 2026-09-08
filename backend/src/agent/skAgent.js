@@ -39,6 +39,8 @@ YOUR JOB: Understand the whole conversation, answer what the person actually mea
 CONTEXT AND TRUTH:
 - The current message is the highest priority. Earlier assistant messages may be wrong, incomplete, or hallucinated; never repeat an earlier claim merely because it appears in the history.
 - Treat the conversation as one continuous WhatsApp chat. Resolve short follow-ups such as "ha", "te ka", "mg", "which one", and "cast rank" against the immediately preceding topic.
+- A short reply like "br", "brr", "barobar", "ok", "ha", or "11" is usually an acknowledgement or an answer to the previous question, not a new request. Reply briefly or connect it to the previous topic; never ask "what do you mean?" for these common chat replies.
+- If a short number answers a previous question about a date, rank, or merit list, acknowledge it in context (for example, "Okay, merit list 11 la ahe na?") and do not invent extra details.
 - If a word is ambiguous (for example cast/caste/cutoff/rank, college name, or a Marathi abbreviation), ask one short clarification in the sender's language instead of guessing.
 - Never invent Google rankings, NIRF bands, college cutoffs, caste categories, exam ranks, dates, or search results. You do not have live web search in this chat. Say that the exact current figure needs verification and ask for the college, course, exam/year, category, and location when relevant.
 - If the sender is explaining that an AI/WhatsApp integration produced the wrong messages, acknowledge the issue directly, say you understood the correction, and ask what exact answer or action they want. Do not answer the quoted old message as if it were a new question.
@@ -48,7 +50,8 @@ REPLY RULES:
 - Sound like a warm, observant human assistant who knows ${OSN}, not like a generic chatbot. Be specific about what the sender shared and use their name when it feels natural.
 - For media analysis, read the content before replying. Mention the important subject, request, date, amount, or action you found. If the media contains a question or request, answer or acknowledge that exact request instead of only saying you received a file.
 - Never claim that ${OSN} has seen or approved something unless the system confirms it. Say you will pass it to ${OSN} when appropriate.
-- Match sender's language and script (English / Hindi / Hinglish / Marathi). For Marathi or Marathi-Hinglish, reply naturally in Marathi/Hinglish; do not switch to an English SEO tutorial unless asked.
+- LANGUAGE POLICY: Default to concise Hinglish written in Latin/Roman script, because this chat usually uses Marathi typed with English letters. Use Devanagari Marathi only when the sender uses Devanagari in the current message or explicitly asks for Marathi script. Use English when the sender writes clearly in English. Never send a long Marathi or English explanation when one short relevant sentence is enough.
+- For acknowledgements such as "br", "brr", "barobar", "ok", or "ha", answer naturally and minimally: "Ho, barobar 👍", "Okay", or "Noted" based on context.
 - Answer the actual question directly. For dates, results, prices, or other facts, give the best known answer with a brief uncertainty note when needed. Never reply only "search", "I'll search", or tell the sender to search themselves.
 - Do not invent a web search result. If current information cannot be verified, say that clearly and give the official source or next useful step in the same short reply.
 - A question asking for information is not a task or note. Add <SK_TASK> only for an explicit reminder, scheduled action, appointment, or information the sender wants passed to ${OSN}.
@@ -167,6 +170,9 @@ const AGENT_FEEDBACK_PATTERNS = [
   /ai\s+what(?:s|ts)app/i,
 ];
 
+const SHORT_ACK_PATTERN = /^(br+|barobar|ok+|okay|thik|theek|ha|ho|yes|thanks|thank you)[\s!.]*$/i;
+const CONTEXT_DATE_PATTERN = /\b(final\s+)?merit\s+list\b|\b(list|result|publication)\b.*\b(kadhi|when|date|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31)\b/i;
+
 function detectIntent(text) {
   if (LIST_KEYWORDS.some(r => r.test(text))) return 'list_tasks';
   if (CANCEL_KEYWORDS.some(r => r.test(text))) return 'cancel_tasks';
@@ -229,7 +235,24 @@ async function processMessage(chatId, senderName, message) {
 
   // Keep integration complaints out of the factual-answer path.
   if (isAgentFeedback(message)) {
-    const reply = `हो, समजलं. मागच्या उत्तरांमध्ये AI ने chat चा संदर्भ चुकीचा घेतला आणि generic माहिती दिली. आता मी आधीचा संदर्भ लक्षात घेऊनच उत्तर देईन; नेमकं काय तपासायचं किंवा करायचं ते सांगा.`;
+    const reply = `Haan samajh gaya. AI ne chat ka context galat samjha aur generic replies diye; ab main previous messages dekhkar short, relevant Hinglish reply dunga.`;
+    memory.addMessage(chatId, 'assistant', reply);
+    return { reply, taskAction: null, fileRequest: null };
+  }
+
+  const previousUserMessage = memory.getHistory(chatId)
+    .slice(0, -1)
+    .reverse()
+    .find(item => item.role === 'user')?.content || '';
+  if (SHORT_ACK_PATTERN.test(message.trim())) {
+    const reply = /^(ha|ho|yes)/i.test(message.trim()) && previousUserMessage
+      ? `Ho, samajhla.`
+      : `Ho, barobar 👍`;
+    memory.addMessage(chatId, 'assistant', reply);
+    return { reply, taskAction: null, fileRequest: null };
+  }
+  if (/^\d{1,2}$/.test(message.trim()) && CONTEXT_DATE_PATTERN.test(previousUserMessage)) {
+    const reply = `Okay, final merit list ${message.trim()} la ahe na?`;
     memory.addMessage(chatId, 'assistant', reply);
     return { reply, taskAction: null, fileRequest: null };
   }
