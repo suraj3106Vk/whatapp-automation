@@ -504,9 +504,17 @@ async function handleIncomingMessage(msg) {
     }
 
     // Process with SK Agent
-    const { reply, taskAction, fileRequest } = await skAgent.processMessage(
-      chatId, senderName, agentMessage
-    );
+    let reply, taskAction, fileRequest;
+    try {
+      const result = await skAgent.processMessage(chatId, senderName, agentMessage);
+      reply = result.reply;
+      taskAction = result.taskAction;
+      fileRequest = result.fileRequest;
+    } catch (agentErr) {
+      console.error('[SKAgent] Processing error:', agentErr.message);
+      // Send fallback message instead of crashing
+      reply = "Sorry, I had an error processing your message. Please try again.";
+    }
 
     // Delay (human-like)
     if (settings.typingDelay) await delay(settings.minDelay, settings.maxDelay);
@@ -540,7 +548,14 @@ async function handleIncomingMessage(msg) {
 
     // Send file if requested
     if (fileRequest) {
-      await handleFileRequest(chatId, fileRequest, senderName);
+      try {
+        await handleFileRequest(chatId, fileRequest, senderName);
+      } catch (fileErr) {
+        console.error('[WhatsApp] File request failed:', fileErr.message);
+        try {
+          await client.sendMessage(chatId, "Sorry, I had trouble accessing that file. Please try again later.");
+        } catch {}
+      }
     }
 
     // Clear typing
@@ -600,11 +615,20 @@ function msToHuman(ms) {
 
 async function handleFileRequest(chatId, fileRequest, senderName) {
   try {
+    console.log(`[FILE REQUEST] From ${senderName}:`, JSON.stringify(fileRequest));
     const matched = await fileManager.findMatchingFile(fileRequest);
+    console.log(`[FILE MATCH] Found:`, matched ? matched.name : 'none');
+    
     if (!matched) {
-      await client.sendMessage(chatId, "I'd love to send that file but I don't have it uploaded yet. Ask the admin to add it!");
+      const availableFiles = await fileManager.listFiles();
+      const fileList = availableFiles.length > 0 
+        ? `\n\nAvailable files:\n${availableFiles.map(f => `• ${f.name}`).join('\n')}`
+        : '';
+      await client.sendMessage(chatId, `I'd love to send that file but I don't have it uploaded yet. Ask the admin to add it!${fileList}`);
       return;
     }
+    
+    console.log(`[FILE SEND] Sending ${matched.name} to ${chatId}`);
     const media = await fileManager.fileToMessageMedia(matched.path);
     await client.sendMessage(chatId, media, { caption: `Here you go! 📎 ${matched.name}` });
     console.log(`[FILE OUT] → ${senderName}: ${matched.name}`);
@@ -613,7 +637,8 @@ async function handleFileRequest(chatId, fileRequest, senderName) {
       message: `[File: ${matched.name}]`, fileName: matched.name, timestamp: Date.now(),
     });
   } catch (err) {
-    console.error('[WhatsApp] handleFileRequest error:', err?.message);
+    console.error('[WhatsApp] handleFileRequest error:', err?.stack || err?.message);
+    await client.sendMessage(chatId, `Sorry, I had an error sending the file: ${err.message}`);
   }
 }
 
