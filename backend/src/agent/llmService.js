@@ -10,23 +10,23 @@ const pdfParse = require('pdf-parse');
 
 // ── API Key Pools ──────────────────────────────────────────────────────────────
 function parseKeys(...values) {
-  return values.flatMap(value => String(value || '').split(',')).map(value => value.trim()).filter(Boolean);
+  return [...new Set(
+    values.flatMap(value => String(value || '').split(',')).map(value => value.trim()).filter(Boolean)
+  )];
 }
 
-const GROQ_KEYS = parseKeys(
-  process.env.GROQ_API_KEYS,
-  process.env.GROQ_API_KEY,
-  process.env.GROQ_API_KEY1,
-  process.env.GROQ_API_KEY2,
-  process.env.GROQ_API_KEY3,
-);
+function loadKeyPool(provider) {
+  const prefix = `${provider}_API_KEY`;
+  const numberedKeys = Object.keys(process.env)
+    .filter(name => new RegExp(`^${prefix}\\d+$`).test(name))
+    .sort((left, right) => Number(left.slice(prefix.length)) - Number(right.slice(prefix.length)))
+    .map(name => process.env[name]);
 
-const GEMINI_KEYS = parseKeys(
-  process.env.GEMINI_API_KEYS,
-  process.env.GEMINI_API_KEY,
-  process.env.GEMINI_API_KEY2,
-  process.env.GEMINI_API_KEY3,
-);
+  return parseKeys(process.env[`${provider}_API_KEYS`], process.env[prefix], ...numberedKeys);
+}
+
+const GROQ_KEYS = loadKeyPool('GROQ');
+const GEMINI_KEYS = loadKeyPool('GEMINI');
 
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
 
@@ -39,29 +39,69 @@ const GROQ_MODELS = [
 ];
 
 const GEMINI_MODELS = [
+  'gemini-flash-latest',
+  'gemini-2.0-flash-latest',
+  'gemini-1.5-flash-latest',
+  'gemini-pro-latest',
+  'gemini-2.5-flash-preview-05-20',
+  'gemini-2.5-pro-exp-03-25',
   'gemini-2.0-flash',
   'gemini-2.0-flash-lite',
+  'gemini-1.5-pro',
   'gemini-1.5-flash',
   'gemini-1.5-flash-8b',
+  'gemini-1.0-pro',
+  'gemini-pro',
 ];
+
+function geminiKeyAuthType(key) {
+  if (/^AQ\./.test(key)) return 'x-goog-header';
+  return 'query-param';
+}
+
+function geminiRequest(apiKey, model, body, extraTimeout = 0) {
+  const authType = geminiKeyAuthType(apiKey);
+  const headers = { 'Content-Type': 'application/json' };
+  let url;
+  if (authType === 'x-goog-header') {
+    headers['x-goog-api-key'] = apiKey;
+    url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  } else {
+    url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  }
+  return axios.post(url, body, {
+    headers,
+    timeout: (GEMINI_TIMEOUT_MS + extraTimeout),
+  });
+}
 
 let groqKeyIdx = 0;
 let geminiKeyIdx = 0;
-let cachedOllamaModel = null;   // first working Ollama model
+let cachedOllamaModel = null;
 let cachedGroqModel = null;
-let ollamaAvailable = null;     // null = untested, true/false = tested
+let ollamaAvailable = null;
 const GROQ_TIMEOUT_MS = Number(process.env.GROQ_TIMEOUT_MS || 6000);
 const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || 9000);
 const groqHealth = new Map();
 const geminiHealth = new Map();
 
+const groqStats = new Map();
+const geminiStats = new Map();
+function initStats(map, keys) {
+  keys.forEach(k => map.set(k, { uses: 0, success: 0, fail: 0, cooldowns: 0, lastUsed: 0 }));
+}
+initStats(groqStats, GROQ_KEYS);
+initStats(geminiStats, GEMINI_KEYS);
+
 function keyIsHealthy(health, key) {
   return !health.get(key)?.until || health.get(key).until <= Date.now();
 }
 
-function coolKey(health, key, status) {
+function coolKey(health, key, status, stats) {
   const duration = status === 429 ? 60000 : status >= 500 ? 15000 : status === 413 ? 5000 : 10000;
   health.set(key, { until: Date.now() + duration, status });
+  const s = stats?.get(key);
+  if (s) s.cooldowns++;
 }
 
 function nextGroqKey() {
@@ -70,6 +110,48 @@ function nextGroqKey() {
 function nextGeminiKey() {
   return GEMINI_KEYS[(geminiKeyIdx++) % GEMINI_KEYS.length];
 }
+
+function reportProviderStats(name, keys, stats) {
+  if (keys.length === 0) return;
+  const totalUses = [...stats.values()].reduce((s, v) => s + v.uses, 0);
+  const totalOk = [...stats.values()].reduce((s, v) => s + v.success, 0);
+  const totalFail = [...stats.values()].reduce((s, v) => s + v.fail, 0);
+  const totalCd = [...stats.values()].reduce((s, v) => s + v.cooldowns, 0);
+  const bars = [];
+  keys.slice(0, Math.min(keys.length, 14)).forEach((k, i) => {
+    const st = stats.get(k);
+    if (!st) return;
+    const pct = totalUses ? Math.round((st.uses / totalUses) * 100) : 0;
+    const bar = '█'.repeat(Math.max(1, Math.round(pct / 5))) + '░'.repeat(20 - Math.max(1, Math.round(pct / 5)));
+    bars.push(`  K${i + 1} ${bar} ${pct}%  uses:${st.uses} ok:${st.success} fail:${st.fail} cd:${st.cooldowns}`);
+  });
+  console.log(`[LLM] 🔄 ${name} pool stats — ${keys.length} keys, ${totalUses} total uses, ok:${totalOk} fail:${totalFail} cooldowns:${totalCd}`);
+  if (totalUses > 0) bars.forEach(b => console.log(b));
+}
+
+const STATS_REPORT_EVERY = 25;
+let callCounter = 0;
+function maybeReportStats() {
+  callCounter++;
+  if (callCounter % STATS_REPORT_EVERY !== 0) return;
+  console.log('\n' + '─'.repeat(60));
+  reportProviderStats('GROQ',   GROQ_KEYS,   groqStats);
+  if (GEMINI_KEYS.length) reportProviderStats('GEMINI', GEMINI_KEYS, geminiStats);
+  console.log('─'.repeat(60) + '\n');
+}
+
+function markStats(stats, key, field) {
+  const s = stats.get(key);
+  if (!s) return;
+  s.uses++;
+  if (field === 'success') s.success++;
+  else if (field === 'fail') s.fail++;
+  s.lastUsed = Date.now();
+}
+
+console.log(`[LLM] 🔑 Key pools loaded → GROQ: ${GROQ_KEYS.length} key${GROQ_KEYS.length === 1 ? '' : 's'}, GEMINI: ${GEMINI_KEYS.length} key${GEMINI_KEYS.length === 1 ? '' : 's'}${GEMINI_KEYS.length === 0 ? ' (DISABLED — no valid keys)' : ''}`);
+if (GROQ_KEYS.length > 1) console.log(`[LLM] ✅ Groq rotation ENABLED (round-robin with rate-limit cooldown)`);
+if (GEMINI_KEYS.length > 1) console.log(`[LLM] ✅ Gemini rotation ENABLED (round-robin with rate-limit cooldown)`);
 
 // ── Token budget ───────────────────────────────────────────────────────────────
 // Rough 4-chars-per-token estimate. groq/compound limit ~30k tokens total.
@@ -330,14 +412,16 @@ async function callGroq(messages) {
           timeout: GROQ_TIMEOUT_MS,
         }
       );
+      markStats(groqStats, apiKey, 'success');
       return resp.data.choices[0].message.content.trim();
     } catch (err) {
       const status = err.response?.status;
       const msg = err.response?.data?.error?.message || err.message;
       console.warn(`[LLM] Groq ${model} key${i + 1} failed (${status}): ${msg?.substring(0, 80)}`);
-      cachedGroqModel = null; // reset for next attempt
+      markStats(groqStats, apiKey, 'fail');
+      cachedGroqModel = null;
       if (status === 401 || status === 403 || status === 413 || status === 429 || status >= 500 || !status) {
-        coolKey(groqHealth, apiKey, status || 0);
+        coolKey(groqHealth, apiKey, status || 0, groqStats);
       }
     }
   }
@@ -347,8 +431,9 @@ async function callGroq(messages) {
 // ── Gemini ─────────────────────────────────────────────────────────────────────
 
 async function callGemini(messages) {
+  if (GEMINI_KEYS.length === 0) throw new Error('Gemini disabled — no valid keys configured');
   const trimmed = trimMessages(messages);
-  const systemText = trimmed.find(m => m.role === 'system')?.content || '';
+  const systemText = trimmed.find(m => m.role === 'system')?.content || 'You are a helpful assistant.';
   const contents = trimmed
     .filter(m => m.role !== 'system')
     .map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
@@ -357,24 +442,41 @@ async function callGemini(messages) {
   if (healthyKeys.length === 0) throw new Error('Gemini keys cooling down');
   for (let i = 0; i < healthyKeys.length; i++) {
     const apiKey = healthyKeys[(geminiKeyIdx++) % healthyKeys.length];
-    for (const model of GEMINI_MODELS.slice(0, 2)) {
+    const authType = geminiKeyAuthType(apiKey);
+    let keyHadFailure = false;
+    for (const model of GEMINI_MODELS) {
       try {
-        const body = { contents, generationConfig: { maxOutputTokens: 500, temperature: 0.7 } };
-        if (systemText) body.system_instruction = { parts: [{ text: systemText }] };
-
-        const resp = await axios.post(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-          body,
-          { timeout: GEMINI_TIMEOUT_MS }
-        );
+        const body = {
+          contents,
+          system_instruction: { parts: [{ text: systemText }] },
+          generationConfig: { maxOutputTokens: 500, temperature: 0.7 },
+        };
+        const extraTimeout = authType === 'x-goog-header' ? 15000 : 0;
+        const resp = await geminiRequest(apiKey, model, body, extraTimeout);
         const text = resp.data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) return text.trim();
+        if (text) {
+          markStats(geminiStats, apiKey, 'success');
+          return text.trim();
+        }
+        const finish = resp.data.candidates?.[0]?.finishReason;
+        if (finish && finish !== 'STOP') continue;
       } catch (err) {
         const status = err.response?.status;
-        if (status === 400 || status === 401 || status === 403) { coolKey(geminiHealth, apiKey, status); break; }
-        if (status === 429 || status >= 500 || !status) coolKey(geminiHealth, apiKey, status || 0);
-        // 404 = model not found, try next model
+        if (status === 404) continue;
+        keyHadFailure = true;
+        if (status === 400 || status === 401 || status === 403) {
+          markStats(geminiStats, apiKey, 'fail');
+          coolKey(geminiHealth, apiKey, status, geminiStats);
+          break;
+        }
+        if (status === 429 || status >= 500 || !status) {
+          markStats(geminiStats, apiKey, 'fail');
+          coolKey(geminiHealth, apiKey, status || 0, geminiStats);
+        }
       }
+    }
+    if (!keyHadFailure) {
+      markStats(geminiStats, apiKey, 'fail');
     }
   }
   throw new Error('Gemini unavailable');
@@ -383,6 +485,7 @@ async function callGemini(messages) {
 // ── Main chat() ────────────────────────────────────────────────────────────────
 
 async function chat(messages) {
+  maybeReportStats();
   let raw = null;
 
   // 1. Try Groq (FAST cloud API — PRIMARY)
@@ -477,15 +580,18 @@ async function analyzeMedia(mediaData, mimeType, caption = '') {
 // ── Gemini Vision ──────────────────────────────────────────────────────────────
 
 async function analyzeImageWithGemini(mediaData, mimeType, caption) {
+  if (GEMINI_KEYS.length === 0) return caption ? `Image received. Caption: "${caption}"` : null;
   const base64 = Buffer.isBuffer(mediaData) ? mediaData.toString('base64') : mediaData;
 
   const promptText = caption
     ? `The user sent this image with the caption: "${caption}". Describe what is in the image concisely (2-4 sentences). Focus on the most important content — text, people, objects, context. Reply in plain text, no markdown.`
     : `Describe what is in this image concisely (2-4 sentences). Focus on the most important content — text, people, objects, context. Reply in plain text, no markdown.`;
 
+  const visionModels = GEMINI_MODELS.filter(m => !m.includes('8b'));
   for (let i = 0; i < GEMINI_KEYS.length; i++) {
     const apiKey = nextGeminiKey();
-    for (const model of ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-8b']) {
+    const authType = geminiKeyAuthType(apiKey);
+    for (const model of visionModels) {
       try {
         const body = {
           contents: [{
@@ -494,13 +600,11 @@ async function analyzeImageWithGemini(mediaData, mimeType, caption) {
               { inline_data: { mime_type: mimeType, data: base64 } },
             ],
           }],
+          system_instruction: { parts: [{ text: 'Describe images accurately in plain text.' }] },
           generationConfig: { maxOutputTokens: 300, temperature: 0.3 },
         };
-        const resp = await axios.post(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-          body,
-          { timeout: 30000 }
-        );
+        const extraTimeout = authType === 'x-goog-header' ? 20000 : 0;
+        const resp = await geminiRequest(apiKey, model, body, extraTimeout + 10000);
         const text = resp.data.candidates?.[0]?.content?.parts?.[0]?.text;
         if (text) {
           console.log(`[LLM] Image analyzed via Gemini Vision (${model})`);
@@ -508,9 +612,8 @@ async function analyzeImageWithGemini(mediaData, mimeType, caption) {
         }
       } catch (err) {
         const status = err.response?.status;
-        if (status === 400 || status === 401 || status === 403) break; // bad key → next key
+        if (status === 400 || status === 401 || status === 403) break;
         if (status === 429) { await new Promise(r => setTimeout(r, 1000)); continue; }
-        // 404 = model not available, try next
       }
     }
   }
