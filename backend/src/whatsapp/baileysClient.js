@@ -19,6 +19,8 @@ const fileManager = require('../files/fileManager');
 const scheduler = require('../agent/taskScheduler');
 const { loadAuthState, getAuthPath } = require('./authManager');
 const { isLoggedOut, getDelay } = require('./reconnectManager');
+const { mergeMessages } = require('../agent/messageNormalizer');
+const memory = require('../memory/conversationMemory');
 
 const OWNER_NAME = process.env.OWNER_NAME || 'Suraj Zalke';
 const OWNER_SHORT_NAME = process.env.OWNER_SHORT_NAME || 'Suraj';
@@ -46,6 +48,8 @@ const settings = {
 const processedMessages = new Map();
 const queues = new Map();
 const knownChats = new Map();
+const pendingTextMessages = new Map();
+const automatedOutgoing = new Map();
 const DEDUP_TTL = 10 * 60 * 1000;
 
 function getState() {
@@ -90,6 +94,7 @@ async function emitQr(nextQr) {
   if (io) io.emit('qr', { qr: nextQr, qrBase64 });
 }
 function textOf(message) {
+  if (message.__combinedText) return message.__combinedText;
   const content = messageContent(message);
   return (content.conversation || content.extendedTextMessage?.text || content.imageMessage?.caption || content.videoMessage?.caption || content.documentMessage?.caption || '').trim();
 }
@@ -121,6 +126,9 @@ function enqueue(chatId, work) {
 }
 async function sendText(chatId, text) {
   if (!socket || state !== 'ready') throw new Error('WhatsApp is not connected');
+  const outgoing = automatedOutgoing.get(chatId) || [];
+  outgoing.push(text);
+  automatedOutgoing.set(chatId, outgoing.slice(-10));
   return socket.sendMessage(normalizeJid(chatId), { text });
 }
 async function sendFile(chatId, filePath, caption = '') {
@@ -149,10 +157,23 @@ function taskConfirmation(task) {
   const when = task.triggerAt ? new Date(task.triggerAt).toLocaleString('en-IN') : 'noted';
   return task.isForOwner ? `Got it! I'll tell ${OWNER_SHORT_NAME} — "${task.description}" — ${when}.` : `Got it! "${task.description}" set for ${when}.`;
 }
-async function handleIncoming(message) {
+async function processIncomingMessage(message) {
   const id = message.key?.id;
   const chatId = message.key?.remoteJid;
-  if (!id || !chatId || message.key.fromMe || chatId === 'status@broadcast') return;
+  if (!id || !chatId || chatId === 'status@broadcast') return;
+  if (message.key.fromMe) {
+    const body = textOf(message);
+    const outgoing = automatedOutgoing.get(chatId) || [];
+    const automatedIndex = outgoing.indexOf(body);
+    if (automatedIndex >= 0) {
+      outgoing.splice(automatedIndex, 1);
+      if (outgoing.length) automatedOutgoing.set(chatId, outgoing);
+      else automatedOutgoing.delete(chatId);
+    } else if (body) {
+      memory.addMessage(chatId, 'owner', body);
+    }
+    return;
+  }
   const now = Date.now();
   for (const [oldId, at] of processedMessages) if (now - at > DEDUP_TTL) processedMessages.delete(oldId);
   if (processedMessages.has(id)) return;
@@ -187,6 +208,24 @@ async function handleIncoming(message) {
     if (result.fileRequest) await handleFileRequest(chatId, result.fileRequest, senderName);
     logger.info({ chatId, totalMs: Date.now() - started }, 'message processed');
   });
+}
+
+async function handleIncoming(message) {
+  const chatId = message.key?.remoteJid;
+  const type = typeOf(message);
+  const body = textOf(message);
+  if (!chatId || type !== 'chat' || !body) return processIncomingMessage(message);
+
+  const pending = pendingTextMessages.get(chatId) || { messages: [], timer: null };
+  pending.messages.push(message);
+  if (pending.timer) clearTimeout(pending.timer);
+  pending.timer = setTimeout(() => {
+    pendingTextMessages.delete(chatId);
+    const first = pending.messages[0];
+    first.__combinedText = mergeMessages(pending.messages.map(textOf));
+    processIncomingMessage(first).catch(error => logger.error({ err: error.message }, 'aggregated message handler failed'));
+  }, 1500);
+  pendingTextMessages.set(chatId, pending);
 }
 async function sendTask(task) { if (state === 'ready') await sendText(task.chatId, `Reminder: ${task.message || task.description || 'Reminder!'}`); }
 async function startSocket() {

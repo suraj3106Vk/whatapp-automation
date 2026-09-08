@@ -9,6 +9,10 @@
 const { generateResponse } = require('./llmRouter');
 const memory = require('../memory/conversationMemory');
 const scheduler = require('./taskScheduler');
+const { normalizeForReasoning } = require('./messageNormalizer');
+const { classifyMessage, isAcknowledgement } = require('./intentClassifier');
+const conversationState = require('./conversationState');
+const { buildConversationContext } = require('./contextBuilder');
 
 // ── Owner config (set by client on WhatsApp ready) ───────────────────────────────
 const ownerConfig = {
@@ -44,6 +48,7 @@ CONTEXT AND TRUTH:
 - If a word is ambiguous (for example cast/caste/cutoff/rank, college name, or a Marathi abbreviation), ask one short clarification in the sender's language instead of guessing.
 - Never invent Google rankings, NIRF bands, college cutoffs, caste categories, exam ranks, dates, or search results. You do not have live web search in this chat. Say that the exact current figure needs verification and ask for the college, course, exam/year, category, and location when relevant.
 - If the sender is explaining that an AI/WhatsApp integration produced the wrong messages, acknowledge the issue directly, say you understood the correction, and ask what exact answer or action they want. Do not answer the quoted old message as if it were a new question.
+- Interpret intent, not spelling. Never treat an informal token as a proper noun before trying Roman-Marathi phonetics and recent context.
 
 REPLY RULES:
 - Short, natural texting style (1-3 sentences). No markdown, no **, no bullets.
@@ -52,11 +57,14 @@ REPLY RULES:
 - Never claim that ${OSN} has seen or approved something unless the system confirms it. Say you will pass it to ${OSN} when appropriate.
 - LANGUAGE POLICY: Default to concise Hinglish written in Latin/Roman script, because this chat usually uses Marathi typed with English letters. Use Devanagari Marathi only when the sender uses Devanagari in the current message or explicitly asks for Marathi script. Use English when the sender writes clearly in English. Never send a long Marathi or English explanation when one short relevant sentence is enough.
 - For acknowledgements such as "br", "brr", "barobar", "ok", or "ha", answer naturally and minimally: "Ho, barobar 👍", "Okay", or "Noted" based on context.
+- Do not explain abbreviations or translate the sender's own sentence unless explicitly asked.
+- Do not tell ${OSN} is unavailable unless away mode is enabled. Participate naturally as his delegate.
 - Answer the actual question directly. For dates, results, prices, or other facts, give the best known answer with a brief uncertainty note when needed. Never reply only "search", "I'll search", or tell the sender to search themselves.
 - Do not invent a web search result. If current information cannot be verified, say that clearly and give the official source or next useful step in the same short reply.
 - A question asking for information is not a task or note. Add <SK_TASK> only for an explicit reminder, scheduled action, appointment, or information the sender wants passed to ${OSN}.
+- For a pure acknowledgement, promise, or message that needs no response, return <SK_NO_REPLY> and nothing else. The system will send no WhatsApp reply.
 - FILE REQUESTS: When the sender asks you to send/share a file, append this exact block at the end: <SK_FILE>{"description":"what they requested","keywords":["important","filename","words"],"fileType":"pdf|image|document|"}</SK_FILE>. Do not use this block for sending a text message.
-- GREETINGS (hi, hello, hey, namaste, hii, hlo, good morning, etc.): Reply warmly and briefly. Example: "Hey! ${OSN} is not available right now, how can I help?"
+- GREETINGS (hi, hello, hey, namaste, hii, hlo, good morning, etc.): Reply warmly and briefly, without saying ${OSN} is unavailable unless away mode is enabled.
 - MEDIA messages (images, PDFs, docs): Acknowledge what was sent and confirm you've noted it for ${OSN}. Example: "Got the image, I'll share it with ${OSN}!" or "Thanks for the PDF, I'll pass it along."
 - If asked "what's the time / current time / abhi kitne baje", just state "${now}" — no explanation.
 - NEVER say "Could you resend the question?" or ask the user to repeat themselves. Always give a helpful response.
@@ -71,7 +79,7 @@ recipients RULE — CRITICAL:
 - "self" = reminder goes to the sender. Use ONLY when sender explicitly says "remind ME" / "mujhe yaad dila".
 
 SIMPLE REPLY EXAMPLES:
-- Sender: "Hi" → reply "Hey! ${OSN} is not available right now. How can I help you?"
+- Sender: "Hi" → reply "Hey! How can I help?"
 - Sender: "I need to meet ${OSN} at 6pm" → reply "Got it, I'll let ${OSN} know. 👍" + task recipients:"owner" message:"${senderName} wants to meet you at 6pm"
 - Sender: "Tell ${OSN} to call me at 8" → reply "OK, I've noted that for ${OSN}." + task recipients:"owner" message:"Call ${senderName} at 8"
 - Sender: "Remind me at 5pm to take medicine" → reply "Done, reminder set." + task recipients:"self"
@@ -100,6 +108,7 @@ function parseBlock(reply, tag) {
 
 function cleanReply(reply) {
   return reply
+    .replace(/<SK_NO_REPLY\s*\/?\s*>/gi, '')
     .replace(/<SK_TASK>[\s\S]*?<\/SK_TASK>/g, '')
     .replace(/<SK_FILE>[\s\S]*?<\/SK_FILE>/g, '')
     .replace(/<SK_LIST_TASKS\/>/g, '')
@@ -227,7 +236,12 @@ async function processMessage(chatId, senderName, message) {
   });
   const timeOnly = new Date().toLocaleTimeString('en-IN', { timeStyle: 'short', hour12: true });
 
-  memory.addMessage(chatId, 'user', message);
+  const normalizedMessage = normalizeForReasoning(message);
+  const historyBeforeMessage = memory.getHistory(chatId);
+  const previousUserMessage = [...historyBeforeMessage].reverse().find(item => item.role !== 'assistant')?.content || '';
+  const classifiedIntent = classifyMessage(message, normalizedMessage, previousUserMessage);
+  conversationState.updateState(chatId, { original: message, normalized: normalizedMessage, role: 'contact' });
+  memory.addMessage(chatId, 'contact', message);
   const isMediaContent = message.startsWith('[MEDIA_CONTENT]');
   const intent = isMediaContent ? 'chat' : detectIntent(message);
   const mentionsOwner = textMentionsOwner(message);
@@ -240,21 +254,31 @@ async function processMessage(chatId, senderName, message) {
     return { reply, taskAction: null, fileRequest: null };
   }
 
-  const previousUserMessage = memory.getHistory(chatId)
-    .slice(0, -1)
-    .reverse()
-    .find(item => item.role === 'user')?.content || '';
-  if (SHORT_ACK_PATTERN.test(message.trim())) {
-    const reply = /^(ha|ho|yes)/i.test(message.trim()) && previousUserMessage
-      ? `Ho, samajhla.`
-      : `Ho, barobar 👍`;
+  if (isAcknowledgement(message)) {
+    const normalizedAck = message.trim().toLowerCase();
+    if (/^(br+|barobar|brobr|ok+|okay|accha|thik|theek|hmm+|k|👍)/i.test(normalizedAck)) {
+      return { reply: null, noReply: true, taskAction: null, fileRequest: null, intent: 'ACKNOWLEDGEMENT' };
+    }
+    const reply = `Ho, barobar.`;
     memory.addMessage(chatId, 'assistant', reply);
-    return { reply, taskAction: null, fileRequest: null };
+    return { reply, taskAction: null, fileRequest: null, intent: 'ACKNOWLEDGEMENT' };
   }
   if (/^\d{1,2}$/.test(message.trim()) && CONTEXT_DATE_PATTERN.test(previousUserMessage)) {
     const reply = `Okay, final merit list ${message.trim()} la ahe na?`;
     memory.addMessage(chatId, 'assistant', reply);
     return { reply, taskAction: null, fileRequest: null };
+  }
+
+  if (classifiedIntent === 'CORRECTION') {
+    const reply = `Ha, samajla. Magcha reply chukicha hota; ata context proper gheun reply karto.`;
+    memory.addMessage(chatId, 'assistant', reply);
+    return { reply, taskAction: null, fileRequest: null, intent: classifiedIntent };
+  }
+
+  if (classifiedIntent === 'PROMISE_FUTURE_ACTION' && !TASK_KEYWORDS.some(pattern => pattern.test(normalizedMessage))) {
+    const reply = `Brr 👍`;
+    memory.addMessage(chatId, 'assistant', reply);
+    return { reply, taskAction: null, fileRequest: null, intent: classifiedIntent };
   }
 
   // ── Time shortcut (no LLM) ────────────────────────────────────────────────
@@ -267,9 +291,9 @@ async function processMessage(chatId, senderName, message) {
   // ── Greeting shortcut (no LLM) ────────────────────────────────────────────
   if (intent === 'greeting') {
     const greetings = [
-      `Hey! ${ownerConfig.shortName} is not available right now. How can I help you?`,
-      `Hi there! I'm ${ownerConfig.shortName}'s assistant. What can I do for you?`,
-      `Hello! ${ownerConfig.shortName} is busy right now. Feel free to leave a message!`,
+      `Hey! How can I help?`,
+      `Hi, bolo.`,
+      `Hello! Kay help pahije?`,
     ];
     const reply = greetings[Math.floor(Math.random() * greetings.length)];
     memory.addMessage(chatId, 'assistant', reply);
@@ -307,10 +331,15 @@ async function processMessage(chatId, senderName, message) {
   // ── Build messages for LLM ─────────────────────────────────────────────────
   // The current user message is already in memory. Keep only a short recent
   // window here; the LLM service applies a second character-based limit.
-  const history = memory.getHistory(chatId).slice(-8);
+  const history = memory.getHistory(chatId);
+  const context = buildConversationContext(history.slice(0, -1), conversationState.getState(chatId), message, normalizedMessage);
   const messages = [
-    { role: 'system', content: buildSystemPrompt(senderName, now) },
-    ...history.map(h => ({ role: h.role, content: h.content })),
+    { role: 'system', content: `${buildSystemPrompt(senderName, now)}\n\n${context}` },
+    ...history.slice(-15, -1).map(h => ({
+      role: h.role === 'assistant' ? 'assistant' : 'user',
+      content: h.role === 'assistant' ? h.content : `[${h.role === 'owner' ? 'OWNER/SURAJ' : 'CONTACT'}]\n${h.content}`,
+    })),
+    { role: 'user', content: `[CONTACT - CURRENT MESSAGE]\n${message}\n[REASONING NORMALIZED]\n${normalizedMessage}` },
   ];
 
   // ── Call LLM ───────────────────────────────────────────────────────────────
@@ -324,7 +353,7 @@ async function processMessage(chatId, senderName, message) {
     if (mentionsOwner) {
       fb = `Got it, I'll let ${ownerConfig.shortName} know about this.`;
     } else if (/\b(hi+|hello|hey|namaste|hlo|hii|kaise\s+ho|kya\s+haal|good\s+(morning|evening|afternoon|night))\b/i.test(message)) {
-      fb = `Hey! ${ownerConfig.shortName} is not available right now. How can I help you?`;
+      fb = `Hey! Kay help pahije?`;
     } else if (/\[.*?(image|photo|pdf|video|audio|document|sticker).*?\]/i.test(message)) {
       fb = `Got it! I'll make sure ${ownerConfig.shortName} sees this.`;
     } else {
@@ -332,6 +361,10 @@ async function processMessage(chatId, senderName, message) {
     }
     memory.addMessage(chatId, 'assistant', fb);
     return { reply: fb, taskAction: null, fileRequest: null };
+  }
+
+  if (/<SK_NO_REPLY\s*\/?\s*>/i.test(rawReply)) {
+    return { reply: null, noReply: true, taskAction: null, fileRequest: null, intent: classifiedIntent };
   }
 
   // ── Parse special blocks ───────────────────────────────────────────────────
