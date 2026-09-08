@@ -16,6 +16,7 @@ const scheduler = require('./agent/taskScheduler');
 const routes = require('./api/routes');
 
 const PORT = process.env.PORT || 3001;
+const HOST = process.env.HOST || '0.0.0.0';
 
 // Allowed origins for CORS
 const ORIGINS = [
@@ -33,7 +34,16 @@ const app = express();
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  cors: { origin: ORIGINS, methods: ['GET', 'POST'] },
+  cors: { 
+    origin: ORIGINS, 
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
+  pingTimeout: 60000,        // How long to wait for pong response
+  pingInterval: 25000,       // How often to send ping
+  connectTimeout: 45000,     // Initial connection timeout
+  transports: ['websocket', 'polling'],  // Try websocket first, fallback to polling
+  allowEIO3: true,           // Support older clients
 });
 
 io.on('connection', (socket) => {
@@ -50,7 +60,19 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.use('/api', routes);
-app.get('/health', (req, res) => res.json({ status: 'ok', service: 'SK Agent' }));
+app.get('/health', (req, res) => {
+  const whatsappState = whatsapp.getState();
+  res.json({
+    status: 'ok',
+    uptime: Math.round(process.uptime()),
+    whatsapp: whatsappState.state,
+    scheduler: 'running',
+    llm: {
+      groq: Boolean(process.env.GROQ_API_KEY || process.env.GROQ_API_KEYS),
+      gemini: Boolean(process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEYS),
+    },
+  });
+});
 
 async function start() {
   console.log('\n╔════════════════════════════════════════╗');
@@ -68,57 +90,40 @@ async function start() {
   scheduler.start();
   console.log('[Server] Task scheduler started');
 
-  await new Promise(resolve => server.listen(PORT, resolve));
-  console.log(`[Server] API → http://localhost:${PORT}`);
+  await new Promise(resolve => server.listen(PORT, HOST, resolve));
+  console.log(`[Server] API → http://${HOST}:${PORT}`);
   console.log(`[Server] Dashboard → http://localhost:5173`);
 
   console.log('\n[WhatsApp] Starting client...');
   await whatsapp.init(io);
 }
 
+async function shutdown(signal) {
+  console.log(`[Server] ${signal} received — shutting down`);
+  scheduler.stop();
+  try { await whatsapp.close(); } catch (err) { console.warn('[Server] WhatsApp shutdown:', err.message); }
+  await new Promise(resolve => server.close(resolve));
+  process.exit(0);
+}
+
+process.once('SIGINT', () => shutdown('SIGINT'));
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+
 start().catch(err => {
   console.error('[Server] Fatal error:', err);
   process.exit(1);
 });
 
-// ── Self-ping keepalive (Railway/cloud hosting) ────────────────────────────────
-// Prevents free tier from sleeping after inactivity
-const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN 
-  ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` 
-  : process.env.SELF_URL || null;
+// ── Global error handlers (prevent crashes) ────────────────────────────────────
+process.on('uncaughtException', (err) => {
+  console.error('[Server] Uncaught Exception:', err);
+  console.error('Stack:', err.stack);
+  // Don't exit - try to recover
+});
 
-if (RAILWAY_URL) {
-  const https = require('https');
-  const http = require('http');
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Server] Unhandled Rejection at:', promise);
+  console.error('Reason:', reason);
+  // Don't exit - try to recover
+});
 
-  function selfPing() {
-    const url = `${RAILWAY_URL}/health`;
-    const lib = url.startsWith('https') ? https : http;
-    const req = lib.get(url, (res) => {
-      console.log(`[Keepalive] Ping → ${url} — ${res.statusCode}`);
-    });
-    req.on('error', (err) => {
-      console.warn(`[Keepalive] Ping failed: ${err.message}`);
-    });
-    req.end();
-  }
-
-  // Random interval between 10–12 minutes
-  function scheduleNextPing() {
-    const ms = (10 + Math.random() * 2) * 60 * 1000; // 10–12 min
-    setTimeout(() => {
-      selfPing();
-      scheduleNextPing();
-    }, ms);
-  }
-
-  // First ping after 2 min (let server fully boot)
-  setTimeout(() => {
-    selfPing();
-    scheduleNextPing();
-  }, 2 * 60 * 1000);
-
-  console.log(`[Keepalive] Self-ping active → ${RAILWAY_URL}/health every 10–12 min`);
-} else {
-  console.log('[Keepalive] No public URL set — self-ping disabled (local mode)');
-}

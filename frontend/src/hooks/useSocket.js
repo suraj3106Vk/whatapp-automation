@@ -12,21 +12,42 @@ export function useSocket() {
   const [messages, setMessages] = useState([])
 
   useEffect(() => {
+    console.log('[Socket] Connecting to:', SOCKET_URL)
+    
     const socket = io(SOCKET_URL, {
       reconnection: true,
-      reconnectionDelay: 2000,
-      reconnectionAttempts: 10,
-      transports: ['websocket', 'polling'],
+      reconnectionDelay: 1000,      // Faster reconnection (was 2000)
+      reconnectionAttempts: 20,     // More attempts (was 10)
+      timeout: 20000,               // Connection timeout
+      transports: ['websocket', 'polling'],  // Try both
+      upgrade: true,                // Allow transport upgrades
+      rememberUpgrade: true,        // Remember successful upgrade
+      path: '/socket.io/',          // Explicit path
     })
     socketRef.current = socket
 
     socket.on('connect', () => {
       setConnected(true)
-      console.log('[Socket] Connected to SK Agent backend')
+      console.log('[Socket] ✅ Connected to SK Agent backend')
     })
 
-    socket.on('disconnect', () => {
+    socket.on('connect_error', (error) => {
+      console.error('[Socket] Connection error:', error.message)
       setConnected(false)
+    })
+
+    socket.on('disconnect', (reason) => {
+      setConnected(false)
+      console.log('[Socket] Disconnected:', reason)
+    })
+
+    socket.on('reconnect_attempt', (attemptNumber) => {
+      console.log(`[Socket] Reconnection attempt ${attemptNumber}...`)
+    })
+
+    socket.on('reconnect', (attemptNumber) => {
+      console.log(`[Socket] ✅ Reconnected after ${attemptNumber} attempts`)
+      setConnected(true)
     })
 
     socket.on('status', (data) => {
@@ -49,7 +70,10 @@ export function useSocket() {
 
     socket.on('settings_updated', () => {})
 
-    return () => { socket.disconnect() }
+    return () => { 
+      console.log('[Socket] Disconnecting...')
+      socket.disconnect() 
+    }
   }, [])
 
   return { socket: socketRef.current, connected, status, qrData, messages }

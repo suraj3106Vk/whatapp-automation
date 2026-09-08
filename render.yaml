@@ -13,15 +13,15 @@ services:
     plan: free
 
     # Render sets PORT automatically; our server reads process.env.PORT
-    # Render also sets RENDER_EXTERNAL_URL automatically (used for self-ping)
+    # Render free services may sleep; a permanent WhatsApp socket is not guaranteed.
 
     # Health check — Render uses this to know the service is alive
     healthCheckPath: /health
 
     # Persistent disk — stores WhatsApp session so you don't re-scan QR every deploy
     disk:
-      name: wwebjs-auth
-      mountPath: /app/.wwebjs_auth
+      name: whatsapp-data
+      mountPath: /data
       sizeGB: 1
 
     # Environment variables — set secret values in Render dashboard
@@ -35,18 +35,14 @@ services:
         value: Suraj Zalke
       - key: OWNER_SHORT_NAME
         value: Suraj
+      - key: WHATSAPP_AUTH_PATH
+        value: /data/whatsapp-auth
+      - key: DATABASE_PATH
+        value: /data/database.sqlite
+      - key: ENABLE_GROUPS
+        value: "false"
       # ↓ Add these in Render Dashboard (keep secrets out of code)
       - key: GROQ_API_KEY
         sync: false
-      - key: GROQ_API_KEY1
-        sync: false
-      - key: GROQ_API_KEY2
-        sync: false
-      - key: GROQ_API_KEY3
-        sync: false
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: GEMINI_API_KEY2
-        sync: false
-      - key: GEMINI_API_KEY3
+      - key: GEMINI_API_KEYS
         sync: false

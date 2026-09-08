@@ -6,7 +6,7 @@
  * - Scheduler integration
  */
 
-const { chat } = require('./llmService');
+const { generateResponse } = require('./llmRouter');
 const memory = require('../memory/conversationMemory');
 const scheduler = require('./taskScheduler');
 
@@ -39,6 +39,10 @@ YOUR JOB: Reply on ${OSN}'s behalf. When someone gives information or an appoint
 REPLY RULES:
 - Short, natural texting style (1-3 sentences). No markdown, no **, no bullets.
 - Match sender's language (English / Hindi / Hinglish).
+- Answer the actual question directly. For dates, results, prices, or other facts, give the best known answer with a brief uncertainty note when needed. Never reply only "search", "I'll search", or tell the sender to search themselves.
+- Do not invent a web search result. If current information cannot be verified, say that clearly and give the official source or next useful step in the same short reply.
+- A question asking for information is not a task or note. Add <SK_TASK> only for an explicit reminder, scheduled action, appointment, or information the sender wants passed to ${OSN}.
+- FILE REQUESTS: When the sender asks you to send/share a file, append this exact block at the end: <SK_FILE>{"description":"what they requested","keywords":["important","filename","words"],"fileType":"pdf|image|document|"}</SK_FILE>. Do not use this block for sending a text message.
 - GREETINGS (hi, hello, hey, namaste, hii, hlo, good morning, etc.): Reply warmly and briefly. Example: "Hey! How can I help you?" or "Hi there! ${OSN} is not available right now, how can I help?"
 - MEDIA messages (images, PDFs, docs): Acknowledge what was sent and confirm you've noted it for ${OSN}. Example: "Got the image, I'll share it with ${OSN}!" or "Thanks for the PDF, I'll pass it along."
 - If asked "what's the time / current time / abhi kitne baje", just state "${now}" — no explanation.
@@ -100,9 +104,15 @@ const TASK_KEYWORDS = [
 ];
 
 const FILE_KEYWORDS = [
-  /send\s+(me\s+)?(the\s+)?/i, /share\s+(the\s+)?/i,
-  /bhej(o|na)/i, /(pdf|image|photo|pic|document|file|catalogue|menu|invoice|brochure)/i,
+  /(?:send|share|bhej(?:o|na)?)\s+(?:me\s+|mujhe\s+)?(?:the\s+|ek\s+)?(?:.*\b(?:pdf|image|img|photo|pic|document|doc|file|catalogue|menu|invoice|brochure|card)\b)/i,
+  /\b(pdf|image|img|photo|pic|document|doc|file|catalogue|menu|invoice|brochure|card)\b/i,
 ];
+
+const FILE_STOP_WORDS = new Set([
+  'send', 'share', 'please', 'can', 'you', 'me', 'the', 'a', 'an', 'my', 'to',
+  'bhejo', 'bhejna', 'mujhe', 'ek', 'do', 'na', 'file', 'document', 'image',
+  'img', 'photo', 'pic', 'pdf', 'doc', 'jpg', 'jpeg', 'png', 'copy', 'karo',
+]);
 
 const LIST_KEYWORDS = [
   /show\s+(my\s+)?(tasks|reminders)/i, /what\s+tasks/i, /list\s+reminders/i,
@@ -164,6 +174,25 @@ function textSaysSelfRemind(text) {
   return SELF_REMIND_PATTERNS.some(p => p.test(text));
 }
 
+function buildFileRequest(text) {
+  const normalized = text.toLowerCase();
+  const words = normalized.match(/[a-z0-9][a-z0-9._-]*/g) || [];
+  const keywords = [...new Set(words.filter(word => (
+    word.length > 2 && !FILE_STOP_WORDS.has(word)
+  )))].slice(0, 12);
+
+  let fileType = '';
+  if (/\b(pdf)\b/i.test(text)) fileType = 'pdf';
+  else if (/\b(image|img|photo|pic|jpg|jpeg|png)\b/i.test(text)) fileType = 'image';
+  else if (/\b(document|doc|file)\b/i.test(text)) fileType = 'document';
+
+  return {
+    description: text.trim(),
+    keywords,
+    fileType,
+  };
+}
+
 // ── Main process function ──────────────────────────────────────────────────────
 
 async function processMessage(chatId, senderName, message) {
@@ -216,8 +245,18 @@ async function processMessage(chatId, senderName, message) {
     return { reply, taskAction: null, fileRequest: null };
   }
 
+  // File matching does not need an LLM. This keeps requests such as
+  // "send me the ration card image" reliable even when a provider is down.
+  if (intent === 'file') {
+    const reply = `I'll check for that file and send it if I have it.`;
+    memory.addMessage(chatId, 'assistant', reply);
+    return { reply, taskAction: null, fileRequest: buildFileRequest(message) };
+  }
+
   // ── Build messages for LLM ─────────────────────────────────────────────────
-  const history = memory.getHistory(chatId);
+  // The current user message is already in memory. Keep only a short recent
+  // window here; the LLM service applies a second character-based limit.
+  const history = memory.getHistory(chatId).slice(-8);
   const messages = [
     { role: 'system', content: buildSystemPrompt(senderName, now) },
     ...history.map(h => ({ role: h.role, content: h.content })),
@@ -226,7 +265,7 @@ async function processMessage(chatId, senderName, message) {
   // ── Call LLM ───────────────────────────────────────────────────────────────
   let rawReply;
   try {
-    rawReply = await chat(messages);
+    rawReply = await generateResponse({ messages, userId: chatId, metadata: { senderName } });
   } catch (err) {
     console.error('[SKAgent] LLM error:', err.message);
     // Friendly fallback instead of scary error
@@ -251,6 +290,11 @@ async function processMessage(chatId, senderName, message) {
   const taskBlock = parseBlock(rawReply, 'SK_TASK');
   if (taskBlock.found && taskBlock.data) {
     taskAction = taskBlock.data;
+  }
+
+  // Informational questions should be answered, not scheduled as notes.
+  if (taskAction && intent === 'chat' && !mentionsOwner) {
+    taskAction = null;
   }
 
   const fileBlock = parseBlock(rawReply, 'SK_FILE');

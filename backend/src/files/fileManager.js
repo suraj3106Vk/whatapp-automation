@@ -6,7 +6,6 @@
 const fs = require('fs-extra');
 const path = require('path');
 const mime = require('mime-types');
-const { MessageMedia } = require('whatsapp-web.js');
 
 const UPLOADS_DIR = path.join(__dirname, '../../uploads');
 
@@ -43,7 +42,9 @@ async function findMatchingFile(fileRequest) {
   const files = await listFiles();
   if (files.length === 0) return null;
 
-  const keywords = (fileRequest.keywords || []).map(k => k.toLowerCase());
+  const keywords = (fileRequest.keywords || [])
+    .map(k => String(k).toLowerCase().trim())
+    .filter(Boolean);
   const description = (fileRequest.description || '').toLowerCase();
   const fileType = (fileRequest.fileType || '').toLowerCase();
 
@@ -58,7 +59,7 @@ async function findMatchingFile(fileRequest) {
     }
 
     // Description words in filename
-    const descWords = description.split(/\s+/);
+    const descWords = description.match(/[a-z0-9][a-z0-9._-]*/g) || [];
     for (const word of descWords) {
       if (word.length > 3 && nameLower.includes(word)) score += 5;
     }
@@ -66,6 +67,7 @@ async function findMatchingFile(fileRequest) {
     // File type match
     if (fileType === 'pdf' && f.mimeType === 'application/pdf') score += 3;
     if (fileType === 'image' && f.mimeType.startsWith('image/')) score += 3;
+    if (fileType === 'document' && !f.mimeType.startsWith('image/') && f.mimeType !== 'application/pdf') score += 3;
 
     return { ...f, score };
   });
@@ -75,15 +77,6 @@ async function findMatchingFile(fileRequest) {
 
   // Return best match if score > 0, otherwise return first file
   return scored[0].score > 0 ? scored[0] : null;
-}
-
-// ── Convert file to WhatsApp MessageMedia ─────────────────────────────────────
-
-async function fileToMessageMedia(filePath) {
-  const data = await fs.readFile(filePath, { encoding: 'base64' });
-  const mimeType = mime.lookup(filePath) || 'application/octet-stream';
-  const filename = path.basename(filePath);
-  return new MessageMedia(mimeType, data, filename);
 }
 
 // ── Save uploaded file from API ────────────────────────────────────────────────
@@ -104,7 +97,6 @@ module.exports = {
   init,
   listFiles,
   findMatchingFile,
-  fileToMessageMedia,
   saveUploadedFile,
   deleteFile,
   UPLOADS_DIR,

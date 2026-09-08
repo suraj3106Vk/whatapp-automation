@@ -387,7 +387,14 @@ router.post('/send-file', express.json(), async (req, res) => {
     return res.status(400).json({ success: false, error: 'chatId and filename required' });
   }
   try {
-    const filePath = path.join(fileManager.UPLOADS_DIR, filename);
+    const safeName = path.basename(filename);
+    if (safeName !== filename) {
+      return res.status(400).json({ success: false, error: 'Invalid filename' });
+    }
+    const filePath = path.join(fileManager.UPLOADS_DIR, safeName);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, error: 'File not found' });
+    }
     await whatsapp.sendFile(chatId, filePath, caption || '');
     res.json({ success: true });
   } catch (err) {
@@ -401,6 +408,53 @@ router.get('/files', async (req, res) => {
   try {
     const files = await fileManager.listFiles();
     res.json({ success: true, files });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── Browse PC folders (local file access) ──
+router.get('/browse-folder', async (req, res) => {
+  const { folder } = req.query;
+  const basePath = folder || require('os').homedir();
+  
+  try {
+    const entries = await fs.readdir(basePath, { withFileTypes: true });
+    const items = entries.map(entry => ({
+      name: entry.name,
+      path: path.join(basePath, entry.name),
+      isDirectory: entry.isDirectory(),
+      size: entry.isFile() ? fs.statSync(path.join(basePath, entry.name)).size : 0,
+    }));
+    
+    res.json({ success: true, currentPath: basePath, items });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ── Upload file from PC path ──
+router.post('/upload-from-path', express.json(), async (req, res) => {
+  const { filePath } = req.body;
+  
+  if (!filePath || !fs.existsSync(filePath)) {
+    return res.status(400).json({ success: false, error: 'File not found' });
+  }
+  
+  try {
+    const fileName = path.basename(filePath);
+    const destPath = path.join(fileManager.UPLOADS_DIR, fileName);
+    await fs.copy(filePath, destPath);
+    
+    const stats = await fs.stat(destPath);
+    res.json({
+      success: true,
+      file: {
+        name: fileName,
+        size: stats.size,
+        path: destPath,
+      },
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

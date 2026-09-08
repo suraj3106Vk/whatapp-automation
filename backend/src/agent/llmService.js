@@ -9,18 +9,24 @@ const axios = require('axios');
 const pdfParse = require('pdf-parse');
 
 // ── API Key Pools ──────────────────────────────────────────────────────────────
-const GROQ_KEYS = [
+function parseKeys(...values) {
+  return values.flatMap(value => String(value || '').split(',')).map(value => value.trim()).filter(Boolean);
+}
+
+const GROQ_KEYS = parseKeys(
+  process.env.GROQ_API_KEYS,
   process.env.GROQ_API_KEY,
   process.env.GROQ_API_KEY1,
   process.env.GROQ_API_KEY2,
   process.env.GROQ_API_KEY3,
-].filter(Boolean);
+);
 
-const GEMINI_KEYS = [
+const GEMINI_KEYS = parseKeys(
+  process.env.GEMINI_API_KEYS,
   process.env.GEMINI_API_KEY,
   process.env.GEMINI_API_KEY2,
   process.env.GEMINI_API_KEY3,
-].filter(Boolean);
+);
 
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
 
@@ -44,6 +50,19 @@ let geminiKeyIdx = 0;
 let cachedOllamaModel = null;   // first working Ollama model
 let cachedGroqModel = null;
 let ollamaAvailable = null;     // null = untested, true/false = tested
+const GROQ_TIMEOUT_MS = Number(process.env.GROQ_TIMEOUT_MS || 6000);
+const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || 9000);
+const groqHealth = new Map();
+const geminiHealth = new Map();
+
+function keyIsHealthy(health, key) {
+  return !health.get(key)?.until || health.get(key).until <= Date.now();
+}
+
+function coolKey(health, key, status) {
+  const duration = status === 429 ? 60000 : status >= 500 ? 15000 : status === 413 ? 5000 : 10000;
+  health.set(key, { until: Date.now() + duration, status });
+}
 
 function nextGroqKey() {
   return GROQ_KEYS[(groqKeyIdx++) % GROQ_KEYS.length];
@@ -54,7 +73,7 @@ function nextGeminiKey() {
 
 // ── Token budget ───────────────────────────────────────────────────────────────
 // Rough 4-chars-per-token estimate. groq/compound limit ~30k tokens total.
-const MAX_PROMPT_CHARS = 8000; // well under 30k tokens to avoid 413
+const MAX_PROMPT_CHARS = 5000; // keep compound requests small and leave room for output
 
 function trimMessages(messages) {
   // Always keep system prompt + last user message at minimum
@@ -224,7 +243,9 @@ async function callOllama(messages) {
 let ollamaInstructionsShown = false;
 
 async function isOllamaRunning() {
-  if (ollamaAvailable !== null) return ollamaAvailable;
+  // A failed check must not be permanent: Ollama may be started after the
+  // backend, especially when the cloud provider fails during a message.
+  if (ollamaAvailable === true) return true;
 
   // Wait up to ~8s in case service is warming up (retry 3x short)
   let lastErr = null;
@@ -275,7 +296,7 @@ async function detectGroqModel(apiKey) {
   try {
     const r = await axios.get('https://api.groq.com/openai/v1/models', {
       headers: { Authorization: `Bearer ${apiKey}` },
-      timeout: 8000,
+      timeout: GROQ_TIMEOUT_MS,
     });
     const available = r.data.data.map(m => m.id);
     for (const m of GROQ_MODELS) {
@@ -294,9 +315,11 @@ async function detectGroqModel(apiKey) {
 
 async function callGroq(messages) {
   const trimmed = trimMessages(messages);
+  const healthyKeys = GROQ_KEYS.filter(key => keyIsHealthy(groqHealth, key));
+  if (healthyKeys.length === 0) throw new Error('Groq keys cooling down');
 
-  for (let i = 0; i < GROQ_KEYS.length; i++) {
-    const apiKey = nextGroqKey();
+  for (let i = 0; i < healthyKeys.length; i++) {
+    const apiKey = healthyKeys[(groqKeyIdx++) % healthyKeys.length];
     const model = await detectGroqModel(apiKey);
     try {
       const resp = await axios.post(
@@ -304,7 +327,7 @@ async function callGroq(messages) {
         { model, messages: trimmed, max_tokens: 500, temperature: 0.7 },
         {
           headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-          timeout: 25000,
+          timeout: GROQ_TIMEOUT_MS,
         }
       );
       return resp.data.choices[0].message.content.trim();
@@ -313,9 +336,9 @@ async function callGroq(messages) {
       const msg = err.response?.data?.error?.message || err.message;
       console.warn(`[LLM] Groq ${model} key${i + 1} failed (${status}): ${msg?.substring(0, 80)}`);
       cachedGroqModel = null; // reset for next attempt
-      if (status === 413) { continue; } // token too large — next key
-      if (status === 429) { await new Promise(r => setTimeout(r, 1500)); continue; }
-      if (status === 401 || status === 403) continue;
+      if (status === 401 || status === 403 || status === 413 || status === 429 || status >= 500 || !status) {
+        coolKey(groqHealth, apiKey, status || 0);
+      }
     }
   }
   throw new Error('Groq unavailable');
@@ -330,9 +353,11 @@ async function callGemini(messages) {
     .filter(m => m.role !== 'system')
     .map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
 
-  for (let i = 0; i < GEMINI_KEYS.length; i++) {
-    const apiKey = nextGeminiKey();
-    for (const model of GEMINI_MODELS) {
+  const healthyKeys = GEMINI_KEYS.filter(key => keyIsHealthy(geminiHealth, key));
+  if (healthyKeys.length === 0) throw new Error('Gemini keys cooling down');
+  for (let i = 0; i < healthyKeys.length; i++) {
+    const apiKey = healthyKeys[(geminiKeyIdx++) % healthyKeys.length];
+    for (const model of GEMINI_MODELS.slice(0, 2)) {
       try {
         const body = { contents, generationConfig: { maxOutputTokens: 500, temperature: 0.7 } };
         if (systemText) body.system_instruction = { parts: [{ text: systemText }] };
@@ -340,14 +365,14 @@ async function callGemini(messages) {
         const resp = await axios.post(
           `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
           body,
-          { timeout: 25000 }
+          { timeout: GEMINI_TIMEOUT_MS }
         );
         const text = resp.data.candidates?.[0]?.content?.parts?.[0]?.text;
         if (text) return text.trim();
       } catch (err) {
         const status = err.response?.status;
-        if (status === 400 || status === 401 || status === 403) break; // bad key → next key
-        if (status === 429) { await new Promise(r => setTimeout(r, 1000)); continue; }
+        if (status === 400 || status === 401 || status === 403) { coolKey(geminiHealth, apiKey, status); break; }
+        if (status === 429 || status >= 500 || !status) coolKey(geminiHealth, apiKey, status || 0);
         // 404 = model not found, try next model
       }
     }
