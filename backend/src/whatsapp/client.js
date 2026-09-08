@@ -275,6 +275,26 @@ async function init(socketIO) {
     scheduler.on('task_due', async (task) => {
       await handleTaskDue(task);
     });
+
+    // ── Polling fallback for Railway (message events sometimes don't fire) ──
+    // Check for new messages every 10 seconds
+    console.log('[WhatsApp] Starting message polling (Railway fallback)...');
+    setInterval(async () => {
+      try {
+        const chats = await client.getChats();
+        for (const chat of chats.slice(0, 20)) {  // Check top 20 recent chats
+          const messages = await chat.fetchMessages({ limit: 5 });
+          for (const msg of messages) {
+            if (!msg.fromMe && !msg.isStatus && msg.timestamp > Date.now() / 1000 - 30) {
+              // Message is from someone else and less than 30 seconds old
+              await handleIncomingMessage(msg);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[WhatsApp] Polling error:', err.message);
+      }
+    }, 10000);  // Poll every 10 seconds
   });
 
   client.on('auth_failure', (msg) => {
