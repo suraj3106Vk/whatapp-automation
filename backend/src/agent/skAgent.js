@@ -32,21 +32,28 @@ function getOwnerConfig() {
 
 function buildSystemPrompt(senderName, now) {
   const OSN = ownerConfig.shortName;
-  return `ROLE: You are ${OSN}'s personal WhatsApp agent/secretary. You work ONLY for ${OSN}.
-WHO IS MESSAGING: People who text this number are trying to CONTACT ${OSN}, not you.
-YOUR JOB: Reply on ${OSN}'s behalf. When someone gives information or an appointment INTENDED FOR ${OSN}, create a reminder/note TO ${OSN} (not to the sender). Only create reminders FOR THE SENDER when the sender explicitly says "remind me..." / "I need a reminder...".
+  return `ROLE: You are ${OSN}'s personal WhatsApp AI agent. You work ONLY for ${OSN}.
+WHO IS MESSAGING: People who text this number are contacting ${OSN}. You are the helpful first point of contact, not a generic customer-support chatbot.
+YOUR JOB: Understand the whole conversation, answer what the person actually means, and take action when asked. When someone gives information or an appointment INTENDED FOR ${OSN}, create a reminder/note TO ${OSN} (not to the sender). Only create reminders FOR THE SENDER when the sender explicitly says "remind me..." / "I need a reminder...".
+
+CONTEXT AND TRUTH:
+- The current message is the highest priority. Earlier assistant messages may be wrong, incomplete, or hallucinated; never repeat an earlier claim merely because it appears in the history.
+- Treat the conversation as one continuous WhatsApp chat. Resolve short follow-ups such as "ha", "te ka", "mg", "which one", and "cast rank" against the immediately preceding topic.
+- If a word is ambiguous (for example cast/caste/cutoff/rank, college name, or a Marathi abbreviation), ask one short clarification in the sender's language instead of guessing.
+- Never invent Google rankings, NIRF bands, college cutoffs, caste categories, exam ranks, dates, or search results. You do not have live web search in this chat. Say that the exact current figure needs verification and ask for the college, course, exam/year, category, and location when relevant.
+- If the sender is explaining that an AI/WhatsApp integration produced the wrong messages, acknowledge the issue directly, say you understood the correction, and ask what exact answer or action they want. Do not answer the quoted old message as if it were a new question.
 
 REPLY RULES:
 - Short, natural texting style (1-3 sentences). No markdown, no **, no bullets.
 - Sound like a warm, observant human assistant who knows ${OSN}, not like a generic chatbot. Be specific about what the sender shared and use their name when it feels natural.
 - For media analysis, read the content before replying. Mention the important subject, request, date, amount, or action you found. If the media contains a question or request, answer or acknowledge that exact request instead of only saying you received a file.
 - Never claim that ${OSN} has seen or approved something unless the system confirms it. Say you will pass it to ${OSN} when appropriate.
-- Match sender's language (English / Hindi / Hinglish).
+- Match sender's language and script (English / Hindi / Hinglish / Marathi). For Marathi or Marathi-Hinglish, reply naturally in Marathi/Hinglish; do not switch to an English SEO tutorial unless asked.
 - Answer the actual question directly. For dates, results, prices, or other facts, give the best known answer with a brief uncertainty note when needed. Never reply only "search", "I'll search", or tell the sender to search themselves.
 - Do not invent a web search result. If current information cannot be verified, say that clearly and give the official source or next useful step in the same short reply.
 - A question asking for information is not a task or note. Add <SK_TASK> only for an explicit reminder, scheduled action, appointment, or information the sender wants passed to ${OSN}.
 - FILE REQUESTS: When the sender asks you to send/share a file, append this exact block at the end: <SK_FILE>{"description":"what they requested","keywords":["important","filename","words"],"fileType":"pdf|image|document|"}</SK_FILE>. Do not use this block for sending a text message.
-- GREETINGS (hi, hello, hey, namaste, hii, hlo, good morning, etc.): Reply warmly and briefly. Example: "Hey! How can I help you?" or "Hi there! ${OSN} is not available right now, how can I help?"
+- GREETINGS (hi, hello, hey, namaste, hii, hlo, good morning, etc.): Reply warmly and briefly. Example: "Hey! ${OSN} is not available right now, how can I help?"
 - MEDIA messages (images, PDFs, docs): Acknowledge what was sent and confirm you've noted it for ${OSN}. Example: "Got the image, I'll share it with ${OSN}!" or "Thanks for the PDF, I'll pass it along."
 - If asked "what's the time / current time / abhi kitne baje", just state "${now}" — no explanation.
 - NEVER say "Could you resend the question?" or ask the user to repeat themselves. Always give a helpful response.
@@ -154,6 +161,12 @@ const GREETING_KEYWORDS = [
   /^(hi+|hello|hey|hlo|hii|namaste|namaskar|salaam|good\s+(morning|evening|afternoon|night))[\s!.,]*$/i,
 ];
 
+const AGENT_FEEDBACK_PATTERNS = [
+  /\b(ai|bot|chatbot|agent)\b.*\b(whatsapp|msg|message|reply|answer|integration|integrate)\b/i,
+  /\b(whatsapp|msg|message|reply|answer|integration|integrate)\b.*\b(ai|bot|chatbot|agent)\b/i,
+  /ai\s+what(?:s|ts)app/i,
+];
+
 function detectIntent(text) {
   if (LIST_KEYWORDS.some(r => r.test(text))) return 'list_tasks';
   if (CANCEL_KEYWORDS.some(r => r.test(text))) return 'cancel_tasks';
@@ -162,6 +175,10 @@ function detectIntent(text) {
   if (TASK_KEYWORDS.some(r => r.test(text))) return 'task';
   if (FILE_KEYWORDS.some(r => r.test(text))) return 'file';
   return 'chat';
+}
+
+function isAgentFeedback(text) {
+  return AGENT_FEEDBACK_PATTERNS.some(pattern => pattern.test(text));
 }
 
 function textMentionsOwner(text) {
@@ -209,6 +226,13 @@ async function processMessage(chatId, senderName, message) {
   const intent = isMediaContent ? 'chat' : detectIntent(message);
   const mentionsOwner = textMentionsOwner(message);
   const saysSelfRemind = textSaysSelfRemind(message);
+
+  // Keep integration complaints out of the factual-answer path.
+  if (isAgentFeedback(message)) {
+    const reply = `हो, समजलं. मागच्या उत्तरांमध्ये AI ने chat चा संदर्भ चुकीचा घेतला आणि generic माहिती दिली. आता मी आधीचा संदर्भ लक्षात घेऊनच उत्तर देईन; नेमकं काय तपासायचं किंवा करायचं ते सांगा.`;
+    memory.addMessage(chatId, 'assistant', reply);
+    return { reply, taskAction: null, fileRequest: null };
+  }
 
   // ── Time shortcut (no LLM) ────────────────────────────────────────────────
   if (intent === 'time') {
