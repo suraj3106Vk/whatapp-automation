@@ -14,6 +14,7 @@ const {
 } = require('@whiskeysockets/baileys');
 
 const skAgent = require('../agent/skAgent');
+const { analyzeMedia } = require('../agent/llmService');
 const fileManager = require('../files/fileManager');
 const scheduler = require('../agent/taskScheduler');
 const { loadAuthState, getAuthPath } = require('./authManager');
@@ -73,6 +74,13 @@ function updateSettings(next) {
   if (io) io.emit('settings_updated', getSettings());
 }
 function normalizeJid(id) { return id.includes('@') ? id : `${id.replace(/\D/g, '')}@s.whatsapp.net`; }
+function messageContent(message) {
+  let content = message.message || {};
+  while (content.ephemeralMessage?.message || content.viewOnceMessage?.message || content.viewOnceMessageV2?.message) {
+    content = content.ephemeralMessage?.message || content.viewOnceMessage?.message || content.viewOnceMessageV2?.message;
+  }
+  return content;
+}
 async function emitQr(nextQr) {
   qr = nextQr;
   state = 'qr';
@@ -82,11 +90,11 @@ async function emitQr(nextQr) {
   if (io) io.emit('qr', { qr: nextQr, qrBase64 });
 }
 function textOf(message) {
-  const content = message.message || {};
+  const content = messageContent(message);
   return (content.conversation || content.extendedTextMessage?.text || content.imageMessage?.caption || content.videoMessage?.caption || content.documentMessage?.caption || '').trim();
 }
 function typeOf(message) {
-  const content = message.message || {};
+  const content = messageContent(message);
   if (content.imageMessage) return 'image';
   if (content.videoMessage) return 'video';
   if (content.audioMessage) return content.audioMessage.ptt ? 'ptt' : 'audio';
@@ -95,6 +103,15 @@ function typeOf(message) {
   if (content.locationMessage) return 'location';
   if (content.contactMessage || content.contactsArrayMessage) return 'vcard';
   return 'chat';
+}
+async function downloadIncomingMedia(message, type) {
+  const content = messageContent(message);
+  const mediaMessage = content[`${type}Message`];
+  if (!mediaMessage || !['image', 'document'].includes(type)) return null;
+  const stream = await downloadContentFromMessage(mediaMessage, type);
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  return Buffer.concat(chunks);
 }
 function enqueue(chatId, work) {
   const previous = queues.get(chatId) || Promise.resolve();
@@ -147,7 +164,19 @@ async function handleIncoming(message) {
     const body = textOf(message);
     const senderName = message.pushName || chatId.split('@')[0];
     knownChats.set(chatId, { id: chatId, name: senderName, isGroup });
-    const agentMessage = body || `[${type} message received]`;
+    let agentMessage = body || `[${type} message received]`;
+    if (type === 'image' || type === 'document') {
+      try {
+        const media = await downloadIncomingMedia(message, type);
+        const mimeType = message.message?.[`${type}Message`]?.mimetype;
+        const analysis = await analyzeMedia(media, mimeType, body);
+        if (analysis) {
+          agentMessage = `[MEDIA_CONTENT]\n${body ? `Caption from ${senderName}: ${body}\n` : ''}Media analysis (${type}):\n${analysis}`;
+        }
+      } catch (error) {
+        logger.warn({ err: error.message, type }, 'incoming media analysis failed');
+      }
+    }
     logMessage({ type: 'incoming', chatId, senderName, isGroup, message: body || `[${type}]`, hasMedia: type !== 'chat', timestamp: now });
     const started = Date.now();
     let result;

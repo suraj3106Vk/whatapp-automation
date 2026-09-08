@@ -38,6 +38,9 @@ YOUR JOB: Reply on ${OSN}'s behalf. When someone gives information or an appoint
 
 REPLY RULES:
 - Short, natural texting style (1-3 sentences). No markdown, no **, no bullets.
+- Sound like a warm, observant human assistant who knows ${OSN}, not like a generic chatbot. Be specific about what the sender shared and use their name when it feels natural.
+- For media analysis, read the content before replying. Mention the important subject, request, date, amount, or action you found. If the media contains a question or request, answer or acknowledge that exact request instead of only saying you received a file.
+- Never claim that ${OSN} has seen or approved something unless the system confirms it. Say you will pass it to ${OSN} when appropriate.
 - Match sender's language (English / Hindi / Hinglish).
 - Answer the actual question directly. For dates, results, prices, or other facts, give the best known answer with a brief uncertainty note when needed. Never reply only "search", "I'll search", or tell the sender to search themselves.
 - Do not invent a web search result. If current information cannot be verified, say that clearly and give the official source or next useful step in the same short reply.
@@ -202,7 +205,8 @@ async function processMessage(chatId, senderName, message) {
   const timeOnly = new Date().toLocaleTimeString('en-IN', { timeStyle: 'short', hour12: true });
 
   memory.addMessage(chatId, 'user', message);
-  const intent = detectIntent(message);
+  const isMediaContent = message.startsWith('[MEDIA_CONTENT]');
+  const intent = isMediaContent ? 'chat' : detectIntent(message);
   const mentionsOwner = textMentionsOwner(message);
   const saysSelfRemind = textSaysSelfRemind(message);
 

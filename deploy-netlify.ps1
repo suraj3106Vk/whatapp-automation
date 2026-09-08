@@ -36,6 +36,7 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host ""
     Write-Host "Remember to set environment variable in Netlify Dashboard:" -ForegroundColor Yellow
     Write-Host "  VITE_API_URL = https://whatapp-automation-production.up.railway.app" -ForegroundColor White
+    Write-Host "  Netlify site: https://whatappai.netlify.app" -ForegroundColor White
 } else {
     Write-Host "❌ Build failed - check errors above" -ForegroundColor Red
 }

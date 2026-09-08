@@ -32,6 +32,15 @@ DATABASE_PATH=/data/database.sqlite
 
 Required provider configuration is `GROQ_API_KEYS` and/or `GEMINI_API_KEYS` as comma-separated values. Legacy single-key variables remain supported. Set `PORT` from the platform and keep `ENABLE_GROUPS=false` unless group handling is intentionally enabled.
 
+For this deployment, Railway is the backend and Netlify is the frontend:
+
+```text
+Railway API: https://whatapp-automation-production.up.railway.app
+Netlify app: https://whatappai.netlify.app
+```
+
+The Netlify build already sets `VITE_API_URL` to the Railway API. Local development keeps using `http://localhost:3001` when that variable is not set.
+
 Railway can use the root `Dockerfile`. Render can use `render.yaml`, but its free tier may sleep and therefore cannot guarantee a permanent WhatsApp WebSocket connection. No self-ping is used.
 
 ## API
@@ -58,4 +67,4 @@ Back up `data/whatsapp-auth/`, `data/memory/`, `data/tasks.json`, and `backend/u
 
 ## Known limitations
 
-The scheduler still uses its existing persisted JSON store rather than SQLite. Incoming media is acknowledged by default; set `ANALYZE_INCOMING_MEDIA=true` only when media analysis is needed because downloading media increases latency and memory use. Voice transcription and optional TTS remain extension points.
+The scheduler still uses its existing persisted JSON store rather than SQLite. Incoming images, PDFs, and text documents are downloaded and analyzed when a configured provider supports them, so replies can reference their contents. Video, audio, and stickers are acknowledged without transcription or vision analysis; voice transcription and optional TTS remain extension points.
