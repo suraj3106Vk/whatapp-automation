@@ -67,7 +67,7 @@ In Render Dashboard → your service → **Environment** tab, add:
    - Also open: `https://YOUR-SERVICE.onrender.com/health`
    - Better: temporarily expose the dashboard by noting the URL
 
-> **After first QR scan**, the session is saved to the persistent disk (`/app/.wwebjs_auth`).
+> **After first QR scan**, the session is saved to the persistent disk (`/data/whatsapp-auth`).
 > You will **never need to scan QR again** unless you manually clear the disk.
 
 ---
@@ -101,7 +101,7 @@ This prevents Render's free tier from sleeping.
 → The Dockerfile installs it via apt. Check build logs for apt errors.
 
 **"Session not found" after redeploy**
-→ The disk at `/app/.wwebjs_auth` persists across deploys. If it's missing, re-scan QR once.
+→ The disk at `/data` persists across deploys. If it's missing, re-scan QR once.
 
 **Bot replies slowly (first message after a long time)**
 → Self-ping is working but Render cold-start can still take 10-30s on first hit.

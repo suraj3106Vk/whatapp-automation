@@ -1,6 +1,6 @@
 # Fix Railway Session Loss - Add Persistent Volume
 
-Railway is deleting your WhatsApp session on every restart. You need to add a **persistent volume** to save the `.wwebjs_auth` folder.
+Railway is deleting your WhatsApp session on every restart. You need to add a **persistent volume** mounted at `/data`; Baileys stores the WhatsApp session in `/data/whatsapp-auth`.
 
 ## 📦 Add Volume in Railway Dashboard
 
@@ -10,7 +10,7 @@ Railway is deleting your WhatsApp session on every restart. You need to add a **
 4. **Click "New Volume"**
 5. **Configure:**
    ```
-   Mount Path: /app/.wwebjs_auth
+   Mount Path: /data
    ```
 6. **Click "Add"**
 
@@ -36,7 +36,7 @@ After scanning QR:
 ## 📝 Alternative: Add via Railway CLI
 
 ```bash
-railway volume add -m /app/.wwebjs_auth
+railway volume add -m /data
 railway up
 ```
 

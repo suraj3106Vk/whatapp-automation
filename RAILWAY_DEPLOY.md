@@ -126,8 +126,8 @@ Railway uses these files:
 
 ### Session logs out randomly
 - Railway restarts app every ~24h on free tier
-- Session should persist (saved in `.wwebjs_auth` volume)
-- If lost, add Railway volume: Settings → Volumes → Mount at `/app/.wwebjs_auth`
+- Session should persist (saved in `/data/whatsapp-auth` on the volume)
+- If lost, add a Railway volume at `/data`
 
 ---
 

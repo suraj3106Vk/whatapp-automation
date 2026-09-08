@@ -74,7 +74,7 @@ WhatsApp session needs persistent storage:
 
 1. Go to **"Variables"** or **"Storage"** tab in Railway
 2. Add a **Volume** (if not already added):
-   - Mount path: `/app/.wwebjs_auth`
+   - Mount path: `/data`
    - This will persist your WhatsApp session across deployments
 
 ### Step 6: Redeploy
@@ -106,7 +106,7 @@ const PORT = process.env.PORT || 3001;
 ### Error: "Cannot create directory .wwebjs_auth"
 **Solution:** Add a persistent volume:
 1. Railway Dashboard → Your Service → Variables
-2. Add Volume: `/app/.wwebjs_auth`
+2. Add Volume: `/data`
 
 ### Error: "EADDRINUSE: Address already in use"
 **Solution:** Only run ONE instance of the service
@@ -131,7 +131,7 @@ Use this checklist to ensure proper setup:
 - [ ] Dockerfile exists in root directory
 - [ ] Railway is configured to use Dockerfile (not Node.js buildpack)
 - [ ] Public networking is enabled in Railway
-- [ ] Volume is mounted at `/app/.wwebjs_auth` (for session persistence)
+- [ ] Volume is mounted at `/data` (for Baileys session persistence)
 - [ ] Environment variables are set (if any custom ones needed)
 - [ ] Latest code is pushed to GitHub (Railway auto-deploys on push)
 - [ ] Deployment shows "Success" in Railway dashboard
@@ -200,7 +200,7 @@ If Railway continues to have issues, try Render (it's similar):
    - **Branch:** main
    - **Instance Type:** Free tier is fine for testing
 5. Add Volume:
-   - Mount path: `/app/.wwebjs_auth`
+   - Mount path: `/data`
    - Size: 1GB
 6. Click **"Create Web Service"**
 

@@ -287,7 +287,7 @@ Optional (set in Railway dashboard if needed):
 1. **Don't add trailing slashes** to `VITE_API_URL` - it breaks API calls
 2. **Wait for Railway to fully deploy** before testing (check logs)
 3. **Add a Volume in Railway** for session persistence:
-   - Mount path: `/app/.wwebjs_auth`
+   - Mount path: `/data`
    - This persists WhatsApp login across deployments
 4. **Netlify autodeploys** on every GitHub push to `main` branch
 5. **Railway autodeploys** on every GitHub push to `main` branch
