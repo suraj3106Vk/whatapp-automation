@@ -6,8 +6,9 @@
 const fs = require('fs-extra');
 const path = require('path');
 const mime = require('mime-types');
+const { getUploadsPath } = require('../config/storage');
 
-const UPLOADS_DIR = path.join(__dirname, '../../uploads');
+const UPLOADS_DIR = getUploadsPath();
 
 async function init() {
   await fs.ensureDir(UPLOADS_DIR);

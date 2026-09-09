@@ -1,6 +1,10 @@
 node_modules
 .wwebjs_auth
 .wwebjs_cache
+data/
+whatsapp-auth/
+auth_info*/
+sessions/
 .env
 uploads/*.pdf
 uploads/*.png

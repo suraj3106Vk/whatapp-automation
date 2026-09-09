@@ -14,6 +14,7 @@ const memory = require('./memory/conversationMemory');
 const fileManager = require('./files/fileManager');
 const scheduler = require('./agent/taskScheduler');
 const routes = require('./api/routes');
+const { getUploadsPath, verifyPersistentStorage } = require('./config/storage');
 
 const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -71,7 +72,7 @@ io.on('connection', (socket) => {
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+app.use('/uploads', express.static(getUploadsPath()));
 app.use('/api', routes);
 app.get('/health', (req, res) => {
   const whatsappState = whatsapp.getState();
@@ -92,6 +93,7 @@ async function start() {
   console.log('║       SK Agent - WhatsApp Bot          ║');
   console.log('╚════════════════════════════════════════╝\n');
 
+  await verifyPersistentStorage();
   await memory.init();
   console.log('[Server] Memory initialized');
 

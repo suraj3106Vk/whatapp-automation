@@ -8,6 +8,10 @@ RUN mkdir -p /data && chown -R node:node /app /data
 
 ENV NODE_ENV=production
 ENV WHATSAPP_AUTH_PATH=/data/whatsapp-auth
+ENV MEMORY_PATH=/data/memory
+ENV UPLOADS_PATH=/data/uploads
+ENV FILES_PATH=/data/files
+ENV SCHEDULER_PATH=/data/scheduler
 ENV DATABASE_PATH=/data/database.sqlite
 
 EXPOSE 3001

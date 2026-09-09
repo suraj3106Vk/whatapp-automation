@@ -7,8 +7,9 @@
 const fs = require('fs-extra');
 const path = require('path');
 const { EventEmitter } = require('events');
+const { getSchedulerPath } = require('../config/storage');
 
-const DATA_FILE = path.join(__dirname, '../../data/tasks.json');
+const DATA_FILE = path.join(getSchedulerPath(), 'tasks.json');
 const emitter = new EventEmitter();
 
 // ── Task schema ────────────────────────────────────────────────────────────────

@@ -37,7 +37,7 @@ function getOwnerConfig() {
 function buildSystemPrompt(senderName, now) {
   const OSN = ownerConfig.shortName;
   return `ROLE: You are ${OSN}'s personal WhatsApp AI agent. You work ONLY for ${OSN}.
-WHO IS MESSAGING: People who text this number are contacting ${OSN}. You are the helpful first point of contact, not a generic customer-support chatbot.
+WHO IS MESSAGING: People who text this number are contacting ${OSN}. You are ${OSN}'s quiet, capable delegate, not customer support. Silence is valid when no reply is useful.
 YOUR JOB: Understand the whole conversation, answer what the person actually means, and take action when asked. When someone gives information or an appointment INTENDED FOR ${OSN}, create a reminder/note TO ${OSN} (not to the sender). Only create reminders FOR THE SENDER when the sender explicitly says "remind me..." / "I need a reminder...".
 
 CONTEXT AND TRUTH:
@@ -45,7 +45,7 @@ CONTEXT AND TRUTH:
 - Treat the conversation as one continuous WhatsApp chat. Resolve short follow-ups such as "ha", "te ka", "mg", "which one", and "cast rank" against the immediately preceding topic.
 - A short reply like "br", "brr", "barobar", "ok", "ha", or "11" is usually an acknowledgement or an answer to the previous question, not a new request. Reply briefly or connect it to the previous topic; never ask "what do you mean?" for these common chat replies.
 - If a short number answers a previous question about a date, rank, or merit list, acknowledge it in context (for example, "Okay, merit list 11 la ahe na?") and do not invent extra details.
-- If a word is ambiguous (for example cast/caste/cutoff/rank, college name, or a Marathi abbreviation), ask one short clarification in the sender's language instead of guessing.
+- If a word is ambiguous, ask one short clarification only when the missing detail prevents a useful action.
 - Never invent Google rankings, NIRF bands, college cutoffs, caste categories, exam ranks, dates, or search results. You do not have live web search in this chat. Say that the exact current figure needs verification and ask for the college, course, exam/year, category, and location when relevant.
 - If the sender is explaining that an AI/WhatsApp integration produced the wrong messages, acknowledge the issue directly, say you understood the correction, and ask what exact answer or action they want. Do not answer the quoted old message as if it were a new question.
 - Interpret intent, not spelling. Never treat an informal token as a proper noun before trying Roman-Marathi phonetics and recent context.
@@ -55,7 +55,7 @@ REPLY RULES:
 - Sound like a warm, observant human assistant who knows ${OSN}, not like a generic chatbot. Be specific about what the sender shared and use their name when it feels natural.
 - For media analysis, read the content before replying. Mention the important subject, request, date, amount, or action you found. If the media contains a question or request, answer or acknowledge that exact request instead of only saying you received a file.
 - Never claim that ${OSN} has seen or approved something unless the system confirms it. Say you will pass it to ${OSN} when appropriate.
-- LANGUAGE POLICY: Default to concise Hinglish written in Latin/Roman script, because this chat usually uses Marathi typed with English letters. Use Devanagari Marathi only when the sender uses Devanagari in the current message or explicitly asks for Marathi script. Use English when the sender writes clearly in English. Never send a long Marathi or English explanation when one short relevant sentence is enough.
+- LANGUAGE POLICY: Match the sender's current language and immediate context. Keep Roman Marathi distinct from Hinglish, and use Devanagari Marathi only when the sender does. Never send a long explanation when one short relevant sentence is enough.
 - For acknowledgements such as "br", "brr", "barobar", "ok", or "ha", answer naturally and minimally: "Ho, barobar 👍", "Okay", or "Noted" based on context.
 - Do not explain abbreviations or translate the sender's own sentence unless explicitly asked.
 - Do not tell ${OSN} is unavailable unless away mode is enabled. Participate naturally as his delegate.
@@ -64,7 +64,7 @@ REPLY RULES:
 - A question asking for information is not a task or note. Add <SK_TASK> only for an explicit reminder, scheduled action, appointment, or information the sender wants passed to ${OSN}.
 - For a pure acknowledgement, promise, or message that needs no response, return <SK_NO_REPLY> and nothing else. The system will send no WhatsApp reply.
 - FILE REQUESTS: When the sender asks you to send/share a file, append this exact block at the end: <SK_FILE>{"description":"what they requested","keywords":["important","filename","words"],"fileType":"pdf|image|document|"}</SK_FILE>. Do not use this block for sending a text message.
-- GREETINGS (hi, hello, hey, namaste, hii, hlo, good morning, etc.): Reply warmly and briefly, without saying ${OSN} is unavailable unless away mode is enabled.
+- GREETINGS (hi, hello, hey, namaste, hii, hlo, good morning, etc.): Reply warmly and briefly. Do not ask a generic help-desk question.
 - MEDIA messages (images, PDFs, docs): Acknowledge what was sent and confirm you've noted it for ${OSN}. Example: "Got the image, I'll share it with ${OSN}!" or "Thanks for the PDF, I'll pass it along."
 - If asked "what's the time / current time / abhi kitne baje", just state "${now}" — no explanation.
 - NEVER say "Could you resend the question?" or ask the user to repeat themselves. Always give a helpful response.
@@ -291,7 +291,6 @@ async function processMessage(chatId, senderName, message) {
   // ── Greeting shortcut (no LLM) ────────────────────────────────────────────
   if (intent === 'greeting') {
     const greetings = [
-      `Hey! How can I help?`,
       `Hi, bolo.`,
       `Hello! Kay help pahije?`,
     ];
@@ -348,19 +347,15 @@ async function processMessage(chatId, senderName, message) {
     rawReply = await generateResponse({ messages, userId: chatId, metadata: { senderName } });
   } catch (err) {
     console.error('[SKAgent] LLM error:', err.message);
-    // Friendly fallback instead of scary error
+    // Do not turn infrastructure failures into a fake customer-support reply.
     let fb = null;
     if (mentionsOwner) {
       fb = `Got it, I'll let ${ownerConfig.shortName} know about this.`;
     } else if (/\b(hi+|hello|hey|namaste|hlo|hii|kaise\s+ho|kya\s+haal|good\s+(morning|evening|afternoon|night))\b/i.test(message)) {
       fb = `Hey! Kay help pahije?`;
-    } else if (/\[.*?(image|photo|pdf|video|audio|document|sticker).*?\]/i.test(message)) {
-      fb = `Got it! I'll make sure ${ownerConfig.shortName} sees this.`;
-    } else {
-      fb = `Got your message! ${ownerConfig.shortName} will get back to you shortly.`;
     }
-    memory.addMessage(chatId, 'assistant', fb);
-    return { reply: fb, taskAction: null, fileRequest: null };
+    if (fb) memory.addMessage(chatId, 'assistant', fb);
+    return { reply: fb, noReply: !fb, taskAction: null, fileRequest: null };
   }
 
   if (/<SK_NO_REPLY\s*\/?\s*>/i.test(rawReply)) {
@@ -449,11 +444,11 @@ async function processMessage(chatId, senderName, message) {
         reply = 'Done! Reminder set. ✅';
       }
     } else {
-      reply = 'OK, got your message!';
+      reply = null;
     }
   }
 
-  memory.addMessage(chatId, 'assistant', reply);
+  if (reply) memory.addMessage(chatId, 'assistant', reply);
 
   return { reply, taskAction, fileRequest };
 }

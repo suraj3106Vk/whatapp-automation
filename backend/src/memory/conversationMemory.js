@@ -5,8 +5,9 @@
 
 const fs = require('fs-extra');
 const path = require('path');
+const { getMemoryPath } = require('../config/storage');
 
-const MEMORY_DIR = path.join(__dirname, '../../data/memory');
+const MEMORY_DIR = getMemoryPath();
 const MAX_HISTORY = 20; // max messages per chat to keep in memory
 
 // In-memory store: { chatId: [{ role, content, timestamp }] }

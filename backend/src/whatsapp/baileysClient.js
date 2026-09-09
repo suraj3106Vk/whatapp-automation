@@ -17,9 +17,13 @@ const skAgent = require('../agent/skAgent');
 const { analyzeMedia } = require('../agent/llmService');
 const fileManager = require('../files/fileManager');
 const scheduler = require('../agent/taskScheduler');
-const { loadAuthState, getAuthPath } = require('./authManager');
+const { loadAuthState, getAuthPath, hasExistingWhatsAppAuth, flushCredentialWrites, getAuthMetadata } = require('./authManager');
+const storage = require('../config/storage');
 const { isLoggedOut, getDelay } = require('./reconnectManager');
 const { mergeMessages } = require('../agent/messageNormalizer');
+const { extractMessageContent, unwrapMessageContent } = require('./messageExtractor');
+const { classifyReplyPolicy } = require('../agent/messagePolicy');
+const { createInboundGuard, isStaleIncomingMessage, timestampMs } = require('./inboundGuard');
 const memory = require('../memory/conversationMemory');
 
 const OWNER_NAME = process.env.OWNER_NAME || 'Suraj Zalke';
@@ -37,6 +41,10 @@ let qrBase64 = null;
 let ownerChatId = null;
 let messageLog = [];
 let schedulerBound = false;
+let explicitLogout = false;
+const BOT_STARTED_AT = Date.now();
+const inboundGuard = createInboundGuard();
+let connectionGeneration = 0;
 
 const settings = {
   autoReply: true,
@@ -57,6 +65,9 @@ function getState() {
     state,
     qr,
     qrBase64,
+    authPath: AUTH_PATH,
+    persistentStorage: !storage.isRailway() || AUTH_PATH === path.resolve('/data/whatsapp-auth'),
+    existingSession: hasExistingWhatsAppAuth(),
     owner: ownerChatId ? { name: OWNER_NAME, shortName: OWNER_SHORT_NAME, chatId: ownerChatId } : null,
   };
 }
@@ -78,13 +89,6 @@ function updateSettings(next) {
   if (io) io.emit('settings_updated', getSettings());
 }
 function normalizeJid(id) { return id.includes('@') ? id : `${id.replace(/\D/g, '')}@s.whatsapp.net`; }
-function messageContent(message) {
-  let content = message.message || {};
-  while (content.ephemeralMessage?.message || content.viewOnceMessage?.message || content.viewOnceMessageV2?.message) {
-    content = content.ephemeralMessage?.message || content.viewOnceMessage?.message || content.viewOnceMessageV2?.message;
-  }
-  return content;
-}
 async function emitQr(nextQr) {
   qr = nextQr;
   state = 'qr';
@@ -95,22 +99,13 @@ async function emitQr(nextQr) {
 }
 function textOf(message) {
   if (message.__combinedText) return message.__combinedText;
-  const content = messageContent(message);
-  return (content.conversation || content.extendedTextMessage?.text || content.imageMessage?.caption || content.videoMessage?.caption || content.documentMessage?.caption || '').trim();
+  return extractMessageContent(message).text;
 }
 function typeOf(message) {
-  const content = messageContent(message);
-  if (content.imageMessage) return 'image';
-  if (content.videoMessage) return 'video';
-  if (content.audioMessage) return content.audioMessage.ptt ? 'ptt' : 'audio';
-  if (content.documentMessage) return 'document';
-  if (content.stickerMessage) return 'sticker';
-  if (content.locationMessage) return 'location';
-  if (content.contactMessage || content.contactsArrayMessage) return 'vcard';
-  return 'chat';
+  return extractMessageContent(message).type;
 }
 async function downloadIncomingMedia(message, type) {
-  const content = messageContent(message);
+  const content = unwrapMessageContent(message);
   const mediaMessage = content[`${type}Message`];
   if (!mediaMessage || !['image', 'document'].includes(type)) return null;
   const stream = await downloadContentFromMessage(mediaMessage, type);
@@ -160,7 +155,11 @@ function taskConfirmation(task) {
 async function processIncomingMessage(message) {
   const id = message.key?.id;
   const chatId = message.key?.remoteJid;
-  if (!id || !chatId || chatId === 'status@broadcast') return;
+  if (!id || !chatId || chatId === 'status@broadcast' || chatId === 'newsletter') return;
+  if (isStaleIncomingMessage(message, BOT_STARTED_AT)) {
+    logger.info({ id, chatId }, 'stale WhatsApp message ignored');
+    return;
+  }
   if (message.key.fromMe) {
     const body = textOf(message);
     const outgoing = automatedOutgoing.get(chatId) || [];
@@ -176,20 +175,34 @@ async function processIncomingMessage(message) {
   }
   const now = Date.now();
   for (const [oldId, at] of processedMessages) if (now - at > DEDUP_TTL) processedMessages.delete(oldId);
-  if (processedMessages.has(id)) return;
+  const extracted = extractMessageContent(message);
+  const guardResult = inboundGuard.check({ chatId, messageId: id, text: extracted.text, timestamp: timestampMs(message.messageTimestamp) || now });
+  if (!guardResult.allowed) {
+    logger.info({ id, chatId, reason: guardResult.reason, count: guardResult.count }, 'inbound message ignored');
+    return;
+  }
   processedMessages.set(id, now);
   const isGroup = chatId.endsWith('@g.us');
   if (!settings.autoReply || (isGroup && !settings.replyToGroups) || settings.blacklistedChats.has(chatId) || (settings.whitelistedOnly && !settings.whitelistedChats.has(chatId))) return;
   return enqueue(chatId, async () => {
-    const type = typeOf(message);
-    const body = textOf(message);
+    const type = extracted.type;
+    const body = extracted.text;
+    if (!body && !extracted.hasMedia) {
+      logger.warn({ messageId: id, topLevelType: Object.keys(message.message || {})[0] || 'unknown', keys: Object.keys(message.message || {}), extractedTextLength: 0 }, 'WA_EXTRACT produced no text');
+      return;
+    }
+    const policy = classifyReplyPolicy(extracted, memory.getHistory(chatId).slice(-6).map(item => item.content));
+    if (policy === 'NO_REPLY') {
+      logger.info({ id, chatId, type, textLength: body.length, policy }, 'message policy suppressed reply');
+      return;
+    }
     const senderName = message.pushName || chatId.split('@')[0];
     knownChats.set(chatId, { id: chatId, name: senderName, isGroup });
-    let agentMessage = body || `[${type} message received]`;
+    let agentMessage = body;
     if (type === 'image' || type === 'document') {
       try {
         const media = await downloadIncomingMedia(message, type);
-        const mimeType = message.message?.[`${type}Message`]?.mimetype;
+        const mimeType = extracted.mimeType;
         const analysis = await analyzeMedia(media, mimeType, body);
         if (analysis) {
           agentMessage = `[MEDIA_CONTENT]\n${body ? `Caption from ${senderName}: ${body}\n` : ''}Media analysis (${type}):\n${analysis}`;
@@ -203,8 +216,13 @@ async function processIncomingMessage(message) {
     let result;
     try { result = await skAgent.processMessage(chatId, senderName, agentMessage); }
     catch (error) { logger.error({ err: error.message }, 'agent processing failed'); result = { reply: 'Sorry, I had an error processing your message. Please try again.' }; }
-    if (result.reply) { await sendText(chatId, result.reply); logMessage({ type: 'outgoing', chatId, senderName: 'SK Agent', message: result.reply, timestamp: Date.now() }); }
-    if (result.taskAction) { const task = skAgent.scheduleTask(chatId, senderName, result.taskAction); await sendText(chatId, taskConfirmation(task)); }
+    let responseText = result.reply || null;
+    if (result.taskAction) {
+      const task = skAgent.scheduleTask(chatId, senderName, result.taskAction);
+      const confirmation = taskConfirmation(task);
+      responseText = responseText ? `${responseText}\n${confirmation}` : confirmation;
+    }
+    if (responseText) { await sendText(chatId, responseText); logMessage({ type: 'outgoing', chatId, senderName: 'SK Agent', message: responseText, timestamp: Date.now() }); }
     if (result.fileRequest) await handleFileRequest(chatId, result.fileRequest, senderName);
     logger.info({ chatId, totalMs: Date.now() - started }, 'message processed');
   });
@@ -229,31 +247,66 @@ async function handleIncoming(message) {
 }
 async function sendTask(task) { if (state === 'ready') await sendText(task.chatId, `Reminder: ${task.message || task.description || 'Reminder!'}`); }
 async function startSocket() {
-  if (starting || state === 'ready' || state === 'connecting') return;
+  if (starting || state === 'ready' || state === 'connecting' || reconnectTimer) return;
   starting = true;
   state = reconnectAttempt ? 'reconnecting' : 'connecting';
   try {
+    const authMetadata = await getAuthMetadata();
+    const existingAuth = authMetadata.existing;
+    logger.info({ authPath: authMetadata.path, existingAuth, keyFiles: authMetadata.keyFiles }, existingAuth ? 'Restoring linked WhatsApp session' : 'No existing WhatsApp auth; pairing may be required');
+    console.log(`[WhatsApp] Auth path: ${authMetadata.path}`);
+    console.log(`[WhatsApp] Existing auth: ${existingAuth ? 'YES' : 'NO'}`);
+    if (existingAuth) console.log(`[WhatsApp Auth] credentials present: YES; key files: ${authMetadata.keyFiles}`);
     const { state: authState, saveCreds } = await loadAuthState();
     const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307] }));
-    socket = makeWASocket({ version, auth: { creds: authState.creds, keys: makeCacheableSignalKeyStore(authState.keys, logger) }, browser: Browsers.ubuntu('SK Agent'), logger, printQRInTerminal: false, markOnlineOnConnect: false, syncFullHistory: false, generateHighQualityLinkPreview: false });
-    socket.ev.on('creds.update', saveCreds);
-    socket.ev.on('messages.upsert', ({ messages, type }) => { if (type === 'notify') messages.forEach(item => handleIncoming(item).catch(error => logger.error({ err: error.message }, 'message handler failed'))); });
-    socket.ev.on('connection.update', update => {
+    const generation = ++connectionGeneration;
+    const activeSocket = makeWASocket({ version, auth: { creds: authState.creds, keys: makeCacheableSignalKeyStore(authState.keys, logger) }, browser: Browsers.ubuntu('SK Agent'), logger, printQRInTerminal: false, markOnlineOnConnect: false, syncFullHistory: false, generateHighQualityLinkPreview: false });
+    socket = activeSocket;
+    activeSocket.ev.on('creds.update', saveCreds);
+    activeSocket.ev.on('messages.upsert', ({ messages, type }) => { if (type === 'notify' && generation === connectionGeneration) messages.forEach(item => handleIncoming(item).catch(error => logger.error({ err: error.message, stack: error.stack }, 'message handler failed'))); });
+    activeSocket.ev.on('connection.update', update => {
+      if (generation !== connectionGeneration) return;
       const { connection, lastDisconnect, qr: nextQr } = update;
       if (nextQr) emitQr(nextQr).catch(error => logger.error({ err: error.message }, 'QR generation failed'));
-      if (connection === 'open') { state = 'ready'; qr = null; qrBase64 = null; reconnectAttempt = 0; ownerChatId = socket.user?.id || null; if (ownerChatId) skAgent.setOwnerConfig({ name: OWNER_NAME, shortName: OWNER_SHORT_NAME, chatId: ownerChatId }); if (io) io.emit('status', getState()); logger.info({ user: ownerChatId }, 'WhatsApp connected'); }
-      if (connection === 'close') { const error = lastDisconnect?.error; socket = null; state = isLoggedOut(error) ? 'logged_out' : 'disconnected'; if (!isLoggedOut(error)) { const delay = getDelay(reconnectAttempt++); state = 'reconnecting'; reconnectTimer = setTimeout(() => { reconnectTimer = null; startSocket().catch(() => {}); }, delay); logger.warn({ delay, reason: error?.message }, 'WhatsApp reconnect scheduled'); } if (io) io.emit('status', getState()); }
+      if (connection === 'open') { state = 'ready'; qr = null; qrBase64 = null; reconnectAttempt = 0; ownerChatId = activeSocket.user?.id || null; if (ownerChatId) skAgent.setOwnerConfig({ name: OWNER_NAME, shortName: OWNER_SHORT_NAME, chatId: ownerChatId }); if (io) io.emit('status', getState()); console.log(existingAuth ? '[WhatsApp] Session restored successfully' : '[WhatsApp] Connected'); logger.info({ user: ownerChatId, authPath: AUTH_PATH, existingAuth }, existingAuth ? 'WhatsApp session restored successfully' : 'WhatsApp connected'); }
+      if (connection === 'close') {
+        const error = lastDisconnect?.error;
+        const loggedOut = isLoggedOut(error);
+        socket = null;
+        state = loggedOut ? 'logged_out' : 'disconnected';
+        logger.error({ name: error?.name, message: error?.message, statusCode: error?.output?.statusCode || error?.statusCode, stack: error?.stack }, 'WhatsApp connection closed');
+        if (!loggedOut && !explicitLogout && !reconnectTimer) {
+          const delay = getDelay(reconnectAttempt++);
+          state = 'reconnecting';
+          reconnectTimer = setTimeout(() => { reconnectTimer = null; startSocket().catch(reconnectError => logger.error({ err: reconnectError.message, stack: reconnectError.stack }, 'WhatsApp reconnect failed')); }, delay);
+          logger.warn({ delay, reason: error?.message }, 'WhatsApp reconnect scheduled');
+        }
+        if (io) io.emit('status', getState());
+      }
     });
   } finally { starting = false; }
 }
-async function init(socketIO) { io = socketIO; await fs.ensureDir(AUTH_PATH); if (!schedulerBound) { schedulerBound = true; scheduler.on('task_due', task => sendTask(task).catch(error => logger.error({ err: error.message }, 'task send failed'))); } await startSocket(); }
+async function init(socketIO) { io = socketIO; await storage.verifyPersistentStorage(); await fs.ensureDir(AUTH_PATH); if (!schedulerBound) { schedulerBound = true; scheduler.on('task_due', task => sendTask(task).catch(error => logger.error({ err: error.message }, 'task send failed'))); } await startSocket(); }
 async function getChats() { return [...knownChats.values()].slice(0, 50).map(chat => ({ ...chat, unreadCount: 0, lastMessage: '' })); }
 async function close() {
   if (reconnectTimer) clearTimeout(reconnectTimer);
   reconnectTimer = null;
+  connectionGeneration++;
   if (socket?.ws) socket.ws.close();
+  await flushCredentialWrites();
   socket = null;
   state = 'disconnected';
 }
-async function logout() { if (reconnectTimer) clearTimeout(reconnectTimer); reconnectTimer = null; if (socket) await socket.logout(); socket = null; state = 'logged_out'; }
+async function logout() {
+  explicitLogout = true;
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  connectionGeneration++;
+  if (socket) await socket.logout();
+  await flushCredentialWrites();
+  await fs.remove(AUTH_PATH);
+  socket = null;
+  state = 'pairing_required';
+  explicitLogout = false;
+}
 module.exports = { init, getState, getSettings, updateSettings, getMessageLog, sendMessage: sendText, sendText, sendFile, getChats, close, logout, getOwnerInfo: () => ({ ownerName: OWNER_NAME, ownerShortName: OWNER_SHORT_NAME, ownerChatId }) };

@@ -19,16 +19,22 @@ Copy-Item .env.example .env
 docker compose up -d --build
 ```
 
-The Compose file mounts `./data` to `/data`, preserving WhatsApp auth and future database state across restarts. Uploads are mounted from `backend/uploads`.
+The Compose file mounts `./data` to `/data`, preserving WhatsApp auth and application state across restarts.
 
 ## Deployment
 
-Use a single persistent service with one replica. Mount a persistent volume at `/data` and set:
+Use a single persistent Railway service with one replica. Add a Railway Volume mounted at `/data` on the same backend service that runs WhatsApp. Set:
 
 ```text
 WHATSAPP_AUTH_PATH=/data/whatsapp-auth
+MEMORY_PATH=/data/memory
+UPLOADS_PATH=/data/uploads
+FILES_PATH=/data/files
+SCHEDULER_PATH=/data/scheduler
 DATABASE_PATH=/data/database.sqlite
 ```
+
+On startup the backend verifies that `/data` is writable and refuses to initialize WhatsApp if Railway auth is configured outside that volume. After the first QR scan, Baileys stores its `creds.json` and key files in `/data/whatsapp-auth`; redeploys and reconnects reuse that directory. Only the dashboard's explicit logout action removes it.
 
 Required provider configuration is `GROQ_API_KEYS` and/or `GEMINI_API_KEYS` as comma-separated values. Legacy single-key variables remain supported. Set `PORT` from the platform and keep `ENABLE_GROUPS=false` unless group handling is intentionally enabled.
 
@@ -46,7 +52,7 @@ Railway can use the root `Dockerfile`. Render can use `render.yaml`, but its fre
 ## API
 
 - `GET /health` returns uptime, WhatsApp state, scheduler state, and configured provider availability.
-- `GET /api/status` returns dashboard-safe WhatsApp state.
+- `GET /api/status` returns dashboard-safe WhatsApp state, including the auth path, persistent-storage flag, and existing-session flag. It never returns credentials.
 - `GET /api/qr-page` shows pairing status while a QR is required.
 - `GET /api/files` lists files available to the agent.
 
@@ -57,13 +63,13 @@ Upload files through the dashboard or place them in `backend/uploads`. A request
 - Replaced `whatsapp-web.js` and Puppeteer with stable Baileys 6.x.
 - Added multi-file auth persistence, QR output, reconnect backoff, bounded deduplication, and per-chat queues.
 - Removed artificial typing delays and browser launch dependencies.
-- Added non-destructive graceful shutdown; explicit logout is separate.
+- Added non-destructive graceful shutdown with credential-write flushing; explicit logout is separate.
 - Added short provider timeouts and temporary key health cooldowns.
 - Preserved memory, scheduler, file handling, API routes, and dashboard transport methods.
 
 ## Backup
 
-Back up `data/whatsapp-auth/`, `data/memory/`, `data/tasks.json`, and `backend/uploads/`. Never commit `.env` or auth files. Rotate any API key that has been exposed or shared outside the secret manager.
+Back up `data/whatsapp-auth/`, `data/memory/`, `data/scheduler/`, and `data/uploads/`. Never commit `.env` or auth files. Rotate any API key that has been exposed or shared outside the secret manager.
 
 ## Known limitations
 

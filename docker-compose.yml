@@ -10,8 +10,11 @@ services:
     environment:
       NODE_ENV: production
       WHATSAPP_AUTH_PATH: /data/whatsapp-auth
+      MEMORY_PATH: /data/memory
+      UPLOADS_PATH: /data/uploads
+      FILES_PATH: /data/files
+      SCHEDULER_PATH: /data/scheduler
       DATABASE_PATH: /data/database.sqlite
     volumes:
       - ./data:/data
-      - ./backend/uploads:/app/uploads
     restart: unless-stopped
