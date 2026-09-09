@@ -264,7 +264,7 @@ async function startSocket() {
     socket = activeSocket;
     activeSocket.ev.on('creds.update', saveCreds);
     activeSocket.ev.on('messages.upsert', ({ messages, type }) => { if (type === 'notify' && generation === connectionGeneration) messages.forEach(item => handleIncoming(item).catch(error => logger.error({ err: error.message, stack: error.stack }, 'message handler failed'))); });
-    activeSocket.ev.on('connection.update', update => {
+    activeSocket.ev.on('connection.update', async update => {
       if (generation !== connectionGeneration) return;
       const { connection, lastDisconnect, qr: nextQr } = update;
       if (nextQr) emitQr(nextQr).catch(error => logger.error({ err: error.message }, 'QR generation failed'));
