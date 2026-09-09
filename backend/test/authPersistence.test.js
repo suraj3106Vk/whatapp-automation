@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const { DisconnectReason } = require('@whiskeysockets/baileys');
 
 function loadStorage(env) {
   const keys = ['RAILWAY_ENVIRONMENT', 'RAILWAY_PROJECT_ID', 'RAILWAY_SERVICE_ID', 'DATA_PATH', 'WHATSAPP_AUTH_PATH'];
@@ -38,4 +39,12 @@ test('auth detection survives a fresh auth manager load', async () => {
   fs.rmSync(authPath, { recursive: true, force: true });
   if (previous === undefined) delete process.env.WHATSAPP_AUTH_PATH;
   else process.env.WHATSAPP_AUTH_PATH = previous;
+});
+
+test('401 auth failures are detected as invalid sessions', () => {
+  const { isAuthFailure } = require('../src/whatsapp/reconnectManager');
+
+  assert.equal(isAuthFailure({ output: { statusCode: 401 }, message: 'Connection Failure' }), true);
+  assert.equal(isAuthFailure({ output: { statusCode: DisconnectReason.loggedOut } }), true);
+  assert.equal(isAuthFailure({ output: { statusCode: 500 }, message: 'Connection Failure' }), false);
 });

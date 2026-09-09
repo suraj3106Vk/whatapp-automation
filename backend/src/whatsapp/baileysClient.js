@@ -19,7 +19,7 @@ const fileManager = require('../files/fileManager');
 const scheduler = require('../agent/taskScheduler');
 const { loadAuthState, getAuthPath, hasExistingWhatsAppAuth, flushCredentialWrites, getAuthMetadata } = require('./authManager');
 const storage = require('../config/storage');
-const { isLoggedOut, getDelay } = require('./reconnectManager');
+const { isLoggedOut, isAuthFailure, getDelay } = require('./reconnectManager');
 const { mergeMessages } = require('../agent/messageNormalizer');
 const { extractMessageContent, unwrapMessageContent } = require('./messageExtractor');
 const { classifyReplyPolicy } = require('../agent/messagePolicy');
@@ -272,10 +272,22 @@ async function startSocket() {
       if (connection === 'close') {
         const error = lastDisconnect?.error;
         const loggedOut = isLoggedOut(error);
+        const authFailure = isAuthFailure(error);
         socket = null;
-        state = loggedOut ? 'logged_out' : 'disconnected';
+        state = loggedOut || authFailure ? 'logged_out' : 'disconnected';
         logger.error({ name: error?.name, message: error?.message, statusCode: error?.output?.statusCode || error?.statusCode, stack: error?.stack }, 'WhatsApp connection closed');
-        if (!loggedOut && !explicitLogout && !reconnectTimer) {
+
+        if (authFailure) {
+          try {
+            await fs.remove(AUTH_PATH);
+            console.log('[WhatsApp] Invalid session detected; cleared auth and waiting for QR pairing.');
+            logger.warn({ authPath: AUTH_PATH }, 'Invalid WhatsApp session cleared');
+          } catch (cleanupError) {
+            logger.warn({ err: cleanupError.message, authPath: AUTH_PATH }, 'Failed to clear invalid WhatsApp auth');
+          }
+        }
+
+        if (!loggedOut && !authFailure && !explicitLogout && !reconnectTimer) {
           const delay = getDelay(reconnectAttempt++);
           state = 'reconnecting';
           reconnectTimer = setTimeout(() => { reconnectTimer = null; startSocket().catch(reconnectError => logger.error({ err: reconnectError.message, stack: reconnectError.stack }, 'WhatsApp reconnect failed')); }, delay);
