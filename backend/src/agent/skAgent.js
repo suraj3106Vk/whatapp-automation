@@ -180,7 +180,6 @@ CONVERSATION HISTORY AND CONTEXT ANALYSIS BELOW ↓
 
 Read carefully: Check if first message, understand emotions, adapt accordingly.`;
 }
-}
 
 // ── Parse SK blocks from LLM reply ────────────────────────────────────────────
 
