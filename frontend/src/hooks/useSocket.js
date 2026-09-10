@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { io } from 'socket.io-client'
+import { normalizeBackendUrl } from '../config/backendUrl.mjs'
 
-// Local development socket connection
-const SOCKET_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+const SOCKET_URL = normalizeBackendUrl(import.meta.env.VITE_API_URL)
 
 export function useSocket() {
   const socketRef = useRef(null)
