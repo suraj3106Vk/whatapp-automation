@@ -41,7 +41,7 @@ Required provider configuration is `GROQ_API_KEYS` and/or `GEMINI_API_KEYS` as c
 For this deployment, Railway is the backend and Netlify is the frontend:
 
 ```text
-Railway API: https://whatapp-automation-production.up.railway.app
+Railway API: https://sk-agent-backend-production.up.railway.app
 Netlify app: https://whatappai.netlify.app
 ```
 
