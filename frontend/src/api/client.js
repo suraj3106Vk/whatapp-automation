@@ -1,7 +1,7 @@
 import axios from 'axios'
-import { normalizeBackendUrl } from '../config/backendUrl.mjs'
 
-const API_URL = normalizeBackendUrl(import.meta.env.VITE_API_URL)
+// Local development API endpoint
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
 const BASE = `${API_URL}/api`
 
 const SOCKET_URL = API_URL

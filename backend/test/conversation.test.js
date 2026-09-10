@@ -6,12 +6,24 @@ const { classifyMessage, isAcknowledgement } = require('../src/agent/intentClass
 const state = require('../src/agent/conversationState');
 const { buildConversationContext } = require('../src/agent/contextBuilder');
 const memory = require('../src/memory/conversationMemory');
-const { processMessage } = require('../src/agent/skAgent');
+const { processMessage, buildSystemPrompt } = require('../src/agent/skAgent');
 
 test('normalizes Roman Marathi without changing the original', () => {
   const original = 'tula ntr pathvte me ek vel srv college list krte brobr mg sang';
   assert.equal(normalizeForReasoning(original), 'tula nantar pathavte me ek vel sarv college list karte barobar mag sang');
   assert.equal(original, 'tula ntr pathvte me ek vel srv college list krte brobr mg sang');
+});
+
+test('normalizes direct Roman Marathi follow-ups for the LLM', () => {
+  assert.equal(normalizeForReasoning('Bolav na tele kuth gela'), 'Bolav na tyala kuthe gela');
+});
+
+test('prompt prevents generic acknowledgement replies to requests', () => {
+  const prompt = buildSystemPrompt('Contact', '10:00 AM');
+  assert.match(prompt, /Contact is the current sender/);
+  assert.match(prompt, /Only use an acknowledgement when the current message is genuinely an acknowledgement/);
+  assert.match(prompt, /bolav na/);
+  assert.match(prompt, /earlier assistant replies as fallible context/);
 });
 
 test('classifies common WhatsApp fragments contextually', () => {

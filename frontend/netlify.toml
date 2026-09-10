@@ -7,7 +7,7 @@
 
 [build.environment]
   NODE_VERSION = "20"
-  VITE_API_URL = "https://sk-agent-backend-production.up.railway.app"
+  VITE_API_URL = "https://whatapp-automation-production.up.railway.app"
 
 # SPA routing — send all routes to index.html
 [[redirects]]

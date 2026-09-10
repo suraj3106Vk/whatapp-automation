@@ -39,6 +39,9 @@ const REPLACEMENTS = [
   ['det', 'de'],
   ['baro', 'barobar'],
   ['brobr', 'barobar'],
+  ['bolva', 'bolav'],
+  ['kuth', 'kuthe'],
+  ['tele', 'tyala'],
 ];
 
 const replacementMap = new Map(REPLACEMENTS);
