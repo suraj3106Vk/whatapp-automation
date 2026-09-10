@@ -27,6 +27,8 @@ function buildConversationContext(history, state, currentMessage, currentNormali
   
   // Build memory state
   const memoryItems = [
+    entities.relationships.length && `👥 RELATIONSHIP: ${entities.relationships.join(', ')} ⚠️ IMPORTANT!`,
+    entities.emotions.length && `💭 EMOTIONAL STATE: ${entities.emotions.join(', ')} ⚠️ BE EMPATHETIC!`,
     entities.topics.length && `🎯 Topics Discussed: ${entities.topics.join(', ')}`,
     entities.people.length && `👥 People Mentioned: ${entities.people.join(', ')}`,
     entities.dates.length && `📅 Times/Dates: ${entities.dates.join(', ')}`,
@@ -88,7 +90,79 @@ function extractEntities(history, currentMsg) {
     people: extractPeople(allText),
     dates: extractDates(allText),
     locations: extractLocations(allText),
+    relationships: extractRelationships(allText, history), // NEW!
+    emotions: extractEmotions(history, currentMsg), // NEW!
   };
+}
+
+// NEW: Extract relationship information
+function extractRelationships(text, history) {
+  const relationships = [];
+  
+  // Sister/brother
+  if (/\b(bahin|sister|बहीण|tai|दीदी|didi)\b/i.test(text)) {
+    relationships.push('SISTER');
+  }
+  if (/\b(भाऊ|brother|bhai|bro)\b/i.test(text)) {
+    relationships.push('BROTHER');
+  }
+  
+  // Family
+  if (/\b(aai|mom|mother|आई|mummy)\b/i.test(text)) {
+    relationships.push('MOTHER');
+  }
+  if (/\b(baba|dad|father|बाबा|papa)\b/i.test(text)) {
+    relationships.push('FATHER');
+  }
+  
+  // Close relationships
+  if (/\b(friend|मित्र|mitra|dost|यार|yaar)\b/i.test(text)) {
+    relationships.push('FRIEND');
+  }
+  if (/\b(girlfriend|gf|बायको|wife)\b/i.test(text)) {
+    relationships.push('PARTNER');
+  }
+  
+  // Detect from conversation patterns
+  const recentText = history.slice(-5).map(h => h.content).join(' ');
+  if (/mi\s+(tujh[ia]|aaplya)\s+(bahin|sister)/i.test(recentText)) {
+    relationships.push('CONFIRMED_SISTER');
+  }
+  
+  return [...new Set(relationships)];
+}
+
+// NEW: Extract emotional state
+function extractEmotions(history, currentMsg) {
+  const emotions = [];
+  const recent = [...history.slice(-3).map(h => h.content), currentMsg].join(' ');
+  
+  // Sad/crying
+  if (/😢|😭|😔|🥲|💔|😞/g.test(recent)) {
+    emotions.push('SAD/CRYING');
+  }
+  
+  // Happy/excited
+  if (/😊|😄|😁|🎉|🥳|😍|❤️/g.test(recent)) {
+    emotions.push('HAPPY/EXCITED');
+  }
+  
+  // Annoyed/frustrated
+  if (/😤|🙄|😑|😒/g.test(recent)) {
+    emotions.push('ANNOYED/FRUSTRATED');
+  }
+  
+  // Confused
+  if (/🤔|😕|❓|🧐/g.test(recent)) {
+    emotions.push('CONFUSED/THINKING');
+  }
+  
+  // Love/affection
+  if (/❤️|💕|💖|😘|wedding|शादी|लग्न/i.test(recent)) {
+    emotions.push('ROMANTIC/WEDDING_CONTEXT');
+  }
+  
+  return emotions;
 }
 
 function extractTopics(text) {
