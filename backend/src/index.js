@@ -30,12 +30,16 @@ const ORIGINS = [
   'http://whatapp.netlify.app',
   'https://whatappai.netlify.app',       // Current Netlify production
   'http://whatappai.netlify.app',
+  'https://whatsapp.vercel.app',         // Vercel production
+  'http://whatsapp.vercel.app',
   process.env.FRONTEND_URL,              // custom domain if set
 ].filter(Boolean);
 
 function isAllowedOrigin(origin) {
   if (!origin) return true;
-  return ORIGINS.includes(origin) || /^https:\/\/[a-z0-9-]+\.netlify\.app$/i.test(origin);
+  return ORIGINS.includes(origin) || 
+         /^https:\/\/[a-z0-9-]+\.netlify\.app$/i.test(origin) ||
+         /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin);
 }
 
 const corsOptions = {
