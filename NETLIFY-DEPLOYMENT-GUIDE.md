@@ -18,7 +18,7 @@
 
 ### Your Railway URL:
 ```
-https://sk-agent-backend-production.up.railway.app
+https://whatapp-automation-production.up.railway.app
 ```
 
 ### Current Status:
@@ -33,13 +33,13 @@ The fixes have been committed. After you push to GitHub, Railway will:
 
 ```bash
 # Health check
-https://sk-agent-backend-production.up.railway.app/health
+https://whatapp-automation-production.up.railway.app/health
 
 # Status check (should show QR state)
-https://sk-agent-backend-production.up.railway.app/api/status
+https://whatapp-automation-production.up.railway.app/api/status
 
 # QR code page (MAIN PAGE TO SCAN)
-https://sk-agent-backend-production.up.railway.app/qr-page
+https://whatapp-automation-production.up.railway.app/qr-page
 ```
 
 ---
@@ -71,7 +71,7 @@ https://sk-agent-backend-production.up.railway.app/qr-page
 1. In Netlify: **Site settings → Environment variables**
 2. Click **"Add a variable"**
 3. **Key:** `VITE_API_URL`
-4. **Value:** `https://sk-agent-backend-production.up.railway.app`
+4. **Value:** `https://whatapp-automation-production.up.railway.app`
 5. **Scope:** `All` (or select specific contexts)
 6. Click **"Create variable"**
 
@@ -97,10 +97,10 @@ If you want a better URL:
 
 ```bash
 # 1. Health check (should return {"status":"ok"})
-curl https://sk-agent-backend-production.up.railway.app/health
+curl https://whatapp-automation-production.up.railway.app/health
 
 # 2. API status (should return WhatsApp state)
-curl https://sk-agent-backend-production.up.railway.app/api/status
+curl https://whatapp-automation-production.up.railway.app/api/status
 
 # 3. QR page (open in browser)
 # Should show large QR code or "WhatsApp Connected"
@@ -108,7 +108,7 @@ curl https://sk-agent-backend-production.up.railway.app/api/status
 
 Open in browser:
 ```
-https://sk-agent-backend-production.up.railway.app/qr-page
+https://whatapp-automation-production.up.railway.app/qr-page
 ```
 
 ### Netlify Frontend Tests:
@@ -134,7 +134,7 @@ https://sk-agent-backend-production.up.railway.app/qr-page
 
 ### Method 2: Via Railway QR Page
 
-1. Open: `https://sk-agent-backend-production.up.railway.app/qr-page`
+1. Open: `https://whatapp-automation-production.up.railway.app/qr-page`
 2. Beautiful QR page with download option
 3. Scan with WhatsApp
 4. Page will show "WhatsApp Connected!" when successful
@@ -166,7 +166,7 @@ Check:
 1. **Environment variable is set:**
    - Go to: Site settings → Environment variables
    - Verify `VITE_API_URL` exists
-   - Value should be: `https://sk-agent-backend-production.up.railway.app`
+   - Value should be: `https://whatapp-automation-production.up.railway.app`
    - **No trailing slash!**
 
 2. **Redeploy after adding variable:**
@@ -187,7 +187,7 @@ Check:
 
 2. **Check `/api/status` endpoint:**
    ```bash
-   curl https://sk-agent-backend-production.up.railway.app/api/status
+   curl https://whatapp-automation-production.up.railway.app/api/status
    ```
    Should return `"state":"qr"` or `"state":"ready"`
 
@@ -246,12 +246,12 @@ After successful deployment:
 
 **Backend API:**
 ```
-https://sk-agent-backend-production.up.railway.app
+https://whatapp-automation-production.up.railway.app
 ```
 
 **QR Code Page (for scanning):**
 ```
-https://sk-agent-backend-production.up.railway.app/qr-page
+https://whatapp-automation-production.up.railway.app/qr-page
 ```
 
 **Frontend Dashboard:**
@@ -278,7 +278,7 @@ Optional (set in Railway dashboard if needed):
 
 ### Netlify (Frontend):
 **REQUIRED:**
-- `VITE_API_URL` = `https://sk-agent-backend-production.up.railway.app`
+- `VITE_API_URL` = `https://whatapp-automation-production.up.railway.app`
 
 ---
 
