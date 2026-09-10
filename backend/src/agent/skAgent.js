@@ -208,7 +208,6 @@ CONVERSATION HISTORY AND CONTEXT ANALYSIS IS BELOW ↓↓↓
 
 Read it carefully, understand relationships, emotions, and flow before responding.`;
 }
-}
 
 // ── Parse SK blocks from LLM reply ────────────────────────────────────────────
 
