@@ -1,7 +1,7 @@
 import axios from 'axios'
 
 // Local development API endpoint
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/+$/, '')
 const BASE = `${API_URL}/api`
 
 const SOCKET_URL = API_URL

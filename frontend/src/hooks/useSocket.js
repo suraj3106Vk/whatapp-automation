@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { io } from 'socket.io-client'
 
 // Local development socket connection
-const SOCKET_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+const SOCKET_URL = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/+$/, '')
 
 export function useSocket() {
   const socketRef = useRef(null)
