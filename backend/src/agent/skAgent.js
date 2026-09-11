@@ -1,214 +1,33 @@
 /**
- * SK Agent - Core Brain
- * - Natural WhatsApp replies (no markdown)
- * - Intent detection: file requests, task scheduling, reminders, notes
- * - Conversation memory per chat
- * - Scheduler integration
+ * SK Agent - Core Brain (REFACTORED)
+ * 
+ * Natural WhatsApp conversation - feels like a REAL PERSON talking.
+ * 
+ * Architecture:
+ * 1. Social intent classification (understand meaning)
+ * 2. Reply policy (should we reply?)
+ * 3. Contact style + dialect (personalize)
+ * 4. Generate response (natural personality)
+ * 5. Filter response (catch chatbot patterns)
+ * 6. Send or execute actions
  */
 
 const { generateResponse } = require('./llmRouter');
 const memory = require('../memory/conversationMemory');
 const scheduler = require('./taskScheduler');
 const { normalizeForReasoning } = require('./messageNormalizer');
-const { classifyMessage, isAcknowledgement } = require('./intentClassifier');
-const conversationState = require('./conversationState');
-const { buildConversationContext } = require('./contextBuilder');
 
-// ── Owner config (set by client on WhatsApp ready) ───────────────────────────────
-const ownerConfig = {
-  name: process.env.OWNER_NAME || 'Suraj Zalke',
-  shortName: process.env.OWNER_SHORT_NAME || 'Suraj',
-  chatId: null,
-};
+// New personality modules
+const { buildPersonalityPrompt, buildContactContext, setOwnerConfig, getOwnerConfig } = require('./personaEngine');
+const { classifySocialIntent } = require('./socialIntent');
+const styleProfile = require('./styleProfile');
+const dialectMemory = require('./dialectMemory');
+const replyPolicy = require('./replyPolicy');
+const responseFilter = require('./responseFilter');
 
-function setOwnerConfig(cfg) {
-  if (cfg.name) ownerConfig.name = cfg.name;
-  if (cfg.shortName) ownerConfig.shortName = cfg.shortName;
-  if (cfg.chatId) ownerConfig.chatId = cfg.chatId;
-}
+// ── Fast-path patterns ──────────────────────────────────────────────────────────
 
-function getOwnerConfig() {
-  return { ...ownerConfig };
-}
-
-// ── System Prompt ──────────────────────────────────────────────────────────────
-// Short, clear, NO LEFTOVER EXAMPLES that confuse the LLM
-
-function buildSystemPrompt(senderName, now) {
-  const OSN = ownerConfig.shortName;
-  return `╔══════════════════════════════════════════════════════════════════╗
-║  YOU ARE: SK AI Assistant - Working for ${OSN} (Suraj Zalke)    ║
-╚══════════════════════════════════════════════════════════════════╝
-
-YOUR ROLE: You are SK AI, an intelligent assistant managing ${OSN}'s WhatsApp.
-WHO IS MESSAGING: ${senderName}
-CURRENT TIME: ${now}
-
-═══════════════════════════════════════════════════════════════════
-🎯 FIRST MESSAGE BEHAVIOR (VERY IMPORTANT)
-═══════════════════════════════════════════════════════════════════
-
-IF this is the FIRST message in conversation (check history):
-↓ ALWAYS introduce yourself clearly:
-  "Hi! I'm SK AI, ${OSN}'s AI assistant. He's currently [status]. How can I help you?"
-  
-Examples:
-- "Hi! I'm SK AI, Suraj's AI assistant managing his messages. How can I help you?"
-- "Hello! SK AI here, I assist Suraj Zalke with his WhatsApp. What can I do for you?"
-- Roman Marathi: "Namaskar! Mi SK AI ahe, Suraj cha AI assistant. Kay madad karu?"
-
-This way people KNOW they're talking to AI, not Suraj directly!
-
-═══════════════════════════════════════════════════════════════════
-🧠 CONTEXT-AWARE BEHAVIOR (CRITICAL)
-═══════════════════════════════════════════════════════════════════
-
-STEP 1: ANALYZE THE SITUATION
-────────────────────────────────
-Before responding, understand:
-
-**EMOTIONAL CONTEXT:**
-- Is ${senderName} happy? (😊, 🎉, excitement)
-- Is ${senderName} sad/crying? (😢, 😭, 💔)
-- Is ${senderName} angry/frustrated? (😤, 🙄, complaints)
-- Is ${senderName} stressed/worried? (tension, deadline, problem words)
-- Is ${senderName} just chatting casually?
-
-**SITUATION TYPE:**
-- PROFESSIONAL: Work, urgent request, important task
-  → Be professional, helpful, efficient
-  
-- PERSONAL/CASUAL: Friend chat, jokes, random talk
-  → Be friendly, warm, can joke
-  
-- EMOTIONAL: Sharing feelings, problems, crying
-  → Be empathetic, supportive, serious (NO jokes!)
-  
-- FAMILY: Sister, parents, close family
-  → Be warm, caring, protective
-  
-- EMERGENCY: "urgent", "jaldi", "help", "problem"
-  → Be quick, focused, helpful immediately
-
-STEP 2: ADAPT YOUR RESPONSE
-────────────────────────────────
-Match your tone to their situation:
-
-**If SERIOUS situation:**
-- DON'T joke or be casual
-- BE empathetic and supportive
-- OFFER real help
-- Example: "I understand. Let me help you with this."
-
-**If CASUAL chat:**
-- CAN be friendly and light
-- Match their energy
-- Example: "Haha nice! What's up?"
-
-**If EMOTIONAL:**
-- Show genuine empathy
-- Don't dismiss feelings
-- Be present and caring
-- Example: "Kay zala? I'm here to listen."
-
-**If ANGRY:**
-- Stay calm and understanding
-- Don't be overly cheerful
-- Address their concern
-- Example: "I get it. Tell me what happened."
-
-═══════════════════════════════════════════════════════════════════
-⚠️ CRITICAL RULES
-═══════════════════════════════════════════════════════════════════
-
-✅ DO:
-- Introduce yourself on FIRST message
-- Analyze emotional context before responding
-- Match tone to situation (serious when needed!)
-- Be professional when situation demands
-- Show real empathy when someone is upset
-- Understand relationship (sister = warmer, client = professional)
-
-❌ DON'T:
-- Always be chill/funny regardless of situation
-- Joke when someone is crying or upset
-- Be casual when situation is serious/professional
-- Ignore emotional cues
-- Treat everyone the same way
-- Forget you're an AI assistant (not Suraj himself)
-
-═══════════════════════════════════════════════════════════════════
-💭 PERSONALITY AS SK AI
-═══════════════════════════════════════════════════════════════════
-
-• Intelligent and capable AI assistant
-• Helpful and efficient
-• Can be warm and friendly (when appropriate)
-• Professional when needed
-• Empathetic to emotions
-• Represents Suraj Zalke well
-• Adapts to each person and situation
-
-NOT just one personality - you ADAPT based on:
-- Who they are (relationship)
-- How they feel (emotion)
-- What they need (situation)
-
-═══════════════════════════════════════════════════════════════════
-🌾 MARATHI DIALECT UNDERSTANDING
-═══════════════════════════════════════════════════════════════════
-
-"Bati/bhaat" = Food/Rice (NOT lights!)
-"Bati khaldo?" = Did you eat?
-"M khaldi koni" = I didn't eat (sarcastic)
-".." = Conversation ending, don't reply
-
-═══════════════════════════════════════════════════════════════════
-📋 BEFORE EVERY RESPONSE ASK:
-═══════════════════════════════════════════════════════════════════
-
-1. Is this their FIRST message? → Introduce yourself as SK AI!
-2. What's their EMOTIONAL state? (happy/sad/angry/stressed)
-3. What's the SITUATION type? (professional/casual/emotional/emergency)
-4. What TONE should I use? (professional/friendly/empathetic/serious)
-5. Am I matching the situation appropriately?
-6. Would this response make sense for an AI assistant?
-
-═══════════════════════════════════════════════════════════════════
-
-CONVERSATION HISTORY AND CONTEXT ANALYSIS BELOW ↓
-
-Read carefully: Check if first message, understand emotions, adapt accordingly.`;
-}
-
-// ── Parse SK blocks from LLM reply ────────────────────────────────────────────
-
-function parseBlock(reply, tag) {
-  const open = `<${tag}>`, close = `</${tag}>`;
-  const selfClose = `<${tag}/>`;
-  if (reply.includes(selfClose)) return { found: true, data: null, isSelfClose: true };
-  const start = reply.indexOf(open);
-  const end = reply.indexOf(close);
-  if (start === -1 || end === -1) return { found: false };
-  try {
-    const json = reply.slice(start + open.length, end).trim();
-    return { found: true, data: JSON.parse(json), isSelfClose: false };
-  } catch {
-    return { found: false };
-  }
-}
-
-function cleanReply(reply) {
-  return reply
-    .replace(/<SK_NO_REPLY\s*\/?\s*>/gi, '')
-    .replace(/<SK_TASK>[\s\S]*?<\/SK_TASK>/g, '')
-    .replace(/<SK_FILE>[\s\S]*?<\/SK_FILE>/g, '')
-    .replace(/<SK_LIST_TASKS\/>/g, '')
-    .replace(/<SK_CANCEL_TASK>[\s\S]*?<\/SK_CANCEL_TASK>/g, '')
-    .trim();
-}
-
-// ── Intent shortcuts — catch obvious requests before hitting LLM ──────────────
+const TIME_KEYWORDS = /\b(what'?s?|current|abhi)\s+(time|kitne\s+baje|samay)\b|kitne\s+baje|what\s+time\s+(is\s+it|now)|kya\s+samay/i;
 
 const TASK_KEYWORDS = [
   /remind\s+me/i, /reminder/i, /set\s+alarm/i, /yaad\s+dila/i, /yaad\s+kar/i,
@@ -239,61 +58,33 @@ const CANCEL_KEYWORDS = [
   /(reminder|task)\s+cancel/i, /band\s+karo/i,
 ];
 
-const TIME_KEYWORDS = [
-  /(what'?s?|current|abhi)\s+(time|kitne\s+baje|samay)/i,
-  /kitne\s+baje/i, /what\s+time\s+(is\s+it|now)/i, /kya\s+samay/i,
-];
-
-// If sender wants to TELL/INFORM Suraj of something — force recipients=owner
 const INFORM_OWNER_PATTERNS = [
   /(tell|inform|msg|message|batao|bhejo|bta|yaad\s+dila(na|o)?|remind)\s+(\w+\s+)?(suraj|owner|boss|sir|him|unhe|unko)/i,
   /suraj\s+(ko|ko\s+to|se|ke\s+liye)/i,
   /(need|want|going|have|supposed)\s+to\s+(meet|see|call|talk\s+to|contact)\s+suraj/i,
   /meet\s+suraj/i, /suraj\s+(to\s+)?meet/i,
-  /meeting\s+(with\s+)?suraj/i,
-  /(hai|hain|hey|hi)\s+.*\b(meet|meeting|call|aana|jana|milna|milne|aao)\b/i,
 ];
 
-// If sender wants a reminder FOR THEMSELVES
 const SELF_REMIND_PATTERNS = [
   /remind\s+me/i, /mujhe\s+yaad/i, /mere\s+liye\s+reminder/i, /yaad\s+dila(na)?\s+mujhe/i,
   /(i|main|mera|meri|hum)\s+.*\b(reminder|alarm|yaad)\b/i,
-  /set\s+(a\s+)?reminder\s+for\s+me/i,
 ];
 
-const GREETING_KEYWORDS = [
-  /^(hi+|hello|hey|hlo|hii|namaste|namaskar|salaam|good\s+(morning|evening|afternoon|night))[\s!.,]*$/i,
-];
-
-const AGENT_FEEDBACK_PATTERNS = [
-  /\b(ai|bot|chatbot|agent)\b.*\b(whatsapp|msg|message|reply|answer|integration|integrate)\b/i,
-  /\b(whatsapp|msg|message|reply|answer|integration|integrate)\b.*\b(ai|bot|chatbot|agent)\b/i,
-  /ai\s+what(?:s|ts)app/i,
-];
-
-const SHORT_ACK_PATTERN = /^(br+|barobar|ok+|okay|thik|theek|ha|ho|yes|thanks|thank you)[\s!.]*$/i;
-const CONTEXT_DATE_PATTERN = /\b(final\s+)?merit\s+list\b|\b(list|result|publication)\b.*\b(kadhi|when|date|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31)\b/i;
+// ── Helper functions ────────────────────────────────────────────────────────────
 
 function detectIntent(text) {
   if (LIST_KEYWORDS.some(r => r.test(text))) return 'list_tasks';
   if (CANCEL_KEYWORDS.some(r => r.test(text))) return 'cancel_tasks';
-  if (TIME_KEYWORDS.some(r => r.test(text))) return 'time';
-  if (GREETING_KEYWORDS.some(r => r.test(text.trim()))) return 'greeting';
+  if (TIME_KEYWORDS.test(text)) return 'time';
   if (TASK_KEYWORDS.some(r => r.test(text))) return 'task';
   if (FILE_KEYWORDS.some(r => r.test(text))) return 'file';
   return 'chat';
 }
 
-function isAgentFeedback(text) {
-  return AGENT_FEEDBACK_PATTERNS.some(pattern => pattern.test(text));
-}
-
 function textMentionsOwner(text) {
   if (!text) return false;
   const t = text.toLowerCase();
-  if (INFORM_OWNER_PATTERNS.some(p => p.test(t))) return true;
-  if (/suraj|zalke|boss/.test(t)) return true;
-  return false;
+  return INFORM_OWNER_PATTERNS.some(p => p.test(t)) || /suraj|zalke|boss/.test(t);
 }
 
 function textSaysSelfRemind(text) {
@@ -313,254 +104,334 @@ function buildFileRequest(text) {
   else if (/\b(image|img|photo|pic|jpg|jpeg|png)\b/i.test(text)) fileType = 'image';
   else if (/\b(document|doc|file)\b/i.test(text)) fileType = 'document';
 
-  return {
-    description: text.trim(),
-    keywords,
-    fileType,
-  };
+  return { description: text.trim(), keywords, fileType };
+}
+
+function parseBlock(reply, tag) {
+  const open = `<${tag}>`, close = `</${tag}>`;
+  const selfClose = `<${tag}/>`;
+  if (reply.includes(selfClose)) return { found: true, data: null, isSelfClose: true };
+  const start = reply.indexOf(open);
+  const end = reply.indexOf(close);
+  if (start === -1 || end === -1) return { found: false };
+  try {
+    const json = reply.slice(start + open.length, end).trim();
+    return { found: true, data: JSON.parse(json), isSelfClose: false };
+  } catch {
+    return { found: false };
+  }
+}
+
+function cleanReply(reply) {
+  return reply
+    .replace(/<SK_NO_REPLY\s*\/?\s*>/gi, '')
+    .replace(/<SK_TASK>[\s\S]*?<\/SK_TASK>/g, '')
+    .replace(/<SK_FILE>[\s\S]*?<\/SK_FILE>/g, '')
+    .replace(/<SK_LIST_TASKS\/>/g, '')
+    .replace(/<SK_CANCEL_TASK>[\s\S]*?<\/SK_CANCEL_TASK>/g, '')
+    .trim();
 }
 
 // ── Main process function ──────────────────────────────────────────────────────
 
-async function processMessage(chatId, senderName, message) {
+async function processMessage(chatId, senderName, message, fromNumber = null) {
   const now = new Date().toLocaleString('en-IN', {
     dateStyle: 'short', timeStyle: 'short', hour12: true,
   });
   const timeOnly = new Date().toLocaleTimeString('en-IN', { timeStyle: 'short', hour12: true });
 
-  const normalizedMessage = normalizeForReasoning(message);
-  const historyBeforeMessage = memory.getHistory(chatId);
-  const previousUserMessage = [...historyBeforeMessage].reverse().find(item => item.role !== 'assistant')?.content || '';
-  const classifiedIntent = classifyMessage(message, normalizedMessage, previousUserMessage);
-  conversationState.updateState(chatId, { original: message, normalized: normalizedMessage, role: 'contact' });
-  memory.addMessage(chatId, 'contact', message);
-  const isMediaContent = message.startsWith('[MEDIA_CONTENT]');
-  const intent = isMediaContent ? 'chat' : detectIntent(message);
-  const mentionsOwner = textMentionsOwner(message);
-  const saysSelfRemind = textSaysSelfRemind(message);
-
-  // Keep integration complaints out of the factual-answer path.
-  if (isAgentFeedback(message)) {
-    const reply = `Haan samajh gaya. AI ne chat ka context galat samjha aur generic replies diye; ab main previous messages dekhkar short, relevant Hinglish reply dunga.`;
-    memory.addMessage(chatId, 'assistant', reply);
-    return { reply, taskAction: null, fileRequest: null };
-  }
-
-  if (isAcknowledgement(message)) {
-    const normalizedAck = message.trim().toLowerCase();
-    if (/^(br+|barobar|brobr|ok+|okay|accha|thik|theek|hmm+|k|👍)/i.test(normalizedAck)) {
-      return { reply: null, noReply: true, taskAction: null, fileRequest: null, intent: 'ACKNOWLEDGEMENT' };
+  const ownerConfig = getOwnerConfig();
+  
+  // ══════════════════════════════════════════════════════════════════════════════
+  // STEP 1: Check owner control messages (stop/start)
+  // ══════════════════════════════════════════════════════════════════════════════
+  
+  if (replyPolicy.isOwnerControlMessage(fromNumber, ownerConfig.number)) {
+    const control = replyPolicy.processOwnerControl(message);
+    
+    if (control.isControl) {
+      console.log(`[SKAgent] Owner control: ${control.action}`);
+      memory.addMessage(chatId, 'assistant', control.reply);
+      return {
+        reply: control.reply,
+        controlAction: control.action,
+        noReply: false,
+      };
     }
-    const reply = `Ho, barobar.`;
-    memory.addMessage(chatId, 'assistant', reply);
-    return { reply, taskAction: null, fileRequest: null, intent: 'ACKNOWLEDGEMENT' };
   }
-  if (/^\d{1,2}$/.test(message.trim()) && CONTEXT_DATE_PATTERN.test(previousUserMessage)) {
-    const reply = `Okay, final merit list ${message.trim()} la ahe na?`;
-    memory.addMessage(chatId, 'assistant', reply);
-    return { reply, taskAction: null, fileRequest: null };
+  
+  // ══════════════════════════════════════════════════════════════════════════════
+  // STEP 2: Get contact profile & dialect
+  // ══════════════════════════════════════════════════════════════════════════════
+  
+  const contactProfile = styleProfile.getProfile(chatId, senderName);
+  const dialectPhrases = dialectMemory.getDialectForContact(chatId);
+  
+  // Update profile from contact message
+  styleProfile.updateFromContactMessage(chatId, senderName, message);
+  
+  // ══════════════════════════════════════════════════════════════════════════════
+  // STEP 3: Normalize message with dialect knowledge
+  // ══════════════════════════════════════════════════════════════════════════════
+  
+  const normalizedMessage = dialectMemory.normalizeWithDialect(chatId, 
+    normalizeForReasoning(message)
+  );
+  
+  // Add to memory
+  memory.addMessage(chatId, 'contact', message);
+  const history = memory.getHistory(chatId);
+  
+  // ══════════════════════════════════════════════════════════════════════════════
+  // STEP 4: Social intent classification
+  // ══════════════════════════════════════════════════════════════════════════════
+  
+  const previousMessages = history.slice(0, -1);
+  const previousMessage = previousMessages.length > 0 
+    ? previousMessages[previousMessages.length - 1] 
+    : null;
+  
+  const socialIntent = classifySocialIntent(message, {
+    previousMessage: previousMessage?.content,
+    previousSenderRole: previousMessage?.role,
+    messageCount: previousMessages.length,
+  });
+  
+  console.log(`[SKAgent] Social intent: ${socialIntent.intent}, mode: ${socialIntent.replyMode}`);
+  
+  // ══════════════════════════════════════════════════════════════════════════════
+  // STEP 5: Reply policy check
+  // ══════════════════════════════════════════════════════════════════════════════
+  
+  const policyDecision = replyPolicy.shouldReply(message, {
+    chatId,
+    senderName,
+    fromNumber,
+    ownerNumber: ownerConfig.number,
+    previousMessages,
+    contactProfile,
+    isGroup: false,
+  });
+  
+  console.log(`[SKAgent] Reply policy: ${policyDecision.reason}, should reply: ${policyDecision.shouldReply}`);
+  
+  if (!policyDecision.shouldReply) {
+    return {
+      reply: null,
+      noReply: true,
+      reason: policyDecision.reason,
+      socialIntent: socialIntent.intent,
+    };
   }
-
-  if (classifiedIntent === 'CORRECTION') {
-    const reply = `Ha, samajla. Magcha reply chukicha hota; ata context proper gheun reply karto.`;
-    memory.addMessage(chatId, 'assistant', reply);
-    return { reply, taskAction: null, fileRequest: null, intent: classifiedIntent };
-  }
-
-  if (classifiedIntent === 'PROMISE_FUTURE_ACTION' && !TASK_KEYWORDS.some(pattern => pattern.test(normalizedMessage))) {
-    const reply = `Brr 👍`;
-    memory.addMessage(chatId, 'assistant', reply);
-    return { reply, taskAction: null, fileRequest: null, intent: classifiedIntent };
-  }
-
-  // ── Time shortcut (no LLM) ────────────────────────────────────────────────
+  
+  // ══════════════════════════════════════════════════════════════════════════════
+  // STEP 6: Fast-path intents (no LLM needed)
+  // ══════════════════════════════════════════════════════════════════════════════
+  
+  const intent = detectIntent(message);
+  
+  // Time query
   if (intent === 'time') {
-    const reply = `Current time is ${timeOnly} (${now}).`;
+    const reply = `${timeOnly}`;
     memory.addMessage(chatId, 'assistant', reply);
     return { reply, taskAction: null, fileRequest: null };
   }
-
-  // ── Greeting shortcut (no LLM) ────────────────────────────────────────────
-  if (intent === 'greeting') {
-    const greetings = [
-      `Hi, bolo.`,
-      `Hello! Kay help pahije?`,
-    ];
-    const reply = greetings[Math.floor(Math.random() * greetings.length)];
-    memory.addMessage(chatId, 'assistant', reply);
-    return { reply, taskAction: null, fileRequest: null };
-  }
-
-  // ── List tasks without LLM ─────────────────────────────────────────────────
+  
+  // List tasks
   if (intent === 'list_tasks') {
     const taskList = scheduler.getTasksForChat(chatId);
     const reply = taskList.length === 0
-      ? 'You have no active tasks or reminders.'
-      : 'Your active tasks:\n' + scheduler.formatTaskList(taskList);
+      ? 'No tasks'
+      : scheduler.formatTaskList(taskList);
     memory.addMessage(chatId, 'assistant', reply);
     return { reply, taskAction: null, fileRequest: null };
   }
-
-  // ── Cancel tasks without LLM ────────────────────────────────────────────────
+  
+  // Cancel tasks
   if (intent === 'cancel_tasks') {
     const count = scheduler.cancelAllForChat(chatId);
-    const reply = count > 0
-      ? `Done! Cancelled ${count} task${count > 1 ? 's' : ''}.`
-      : 'No active tasks to cancel.';
+    const reply = count > 0 ? `Done, cancelled ${count}` : 'No tasks';
     memory.addMessage(chatId, 'assistant', reply);
     return { reply, taskAction: null, fileRequest: null };
   }
-
-  // File matching does not need an LLM. This keeps requests such as
-  // "send me the ration card image" reliable even when a provider is down.
+  
+  // File request
   if (intent === 'file') {
-    const reply = `I'll check for that file and send it if I have it.`;
+    const reply = `Checking...`;
     memory.addMessage(chatId, 'assistant', reply);
     return { reply, taskAction: null, fileRequest: buildFileRequest(message) };
   }
+  
+  // ══════════════════════════════════════════════════════════════════════════════
+  // STEP 7: Build LLM context with personality
+  // ══════════════════════════════════════════════════════════════════════════════
+  
+  const personalityPrompt = buildPersonalityPrompt(contactProfile, now);
+  const contactContext = buildContactContext(contactProfile, dialectPhrases);
+  
+  // Build conversation history (short window)
+  const recentHistory = history.slice(-12, -1).map(h => ({
+    role: h.role === 'assistant' ? 'assistant' : 'user',
+    content: h.role === 'assistant' 
+      ? h.content 
+      : `[${h.role === 'owner' ? 'OWNER/SURAJ' : 'CONTACT'}]\n${h.content}`,
+  }));
+  
+  const contextInfo = `
+RECENT CONVERSATION:
+${recentHistory.map(h => `${h.role}: ${h.content}`).join('\n')}
 
-  // ── Build messages for LLM ─────────────────────────────────────────────────
-  // The current user message is already in memory. Keep only a short recent
-  // window here; the LLM service applies a second character-based limit.
-  const history = memory.getHistory(chatId);
-  const context = buildConversationContext(history.slice(0, -1), conversationState.getState(chatId), message, normalizedMessage);
+CONTACT CONTEXT:
+${contactContext}
+
+CURRENT MESSAGE:
+[CONTACT - ${senderName}]
+${message}
+
+[NORMALIZED WITH DIALECT]
+${normalizedMessage}
+
+SOCIAL INTENT DETECTED: ${socialIntent.intent}
+REPLY MODE: ${socialIntent.replyMode}
+${policyDecision.avoidQuestion ? 'NOTE: Avoid asking questions (already asked too many recently)\n' : ''}
+`;
+  
   const messages = [
-    { role: 'system', content: `${buildSystemPrompt(senderName, now)}\n\n${context}` },
-    ...history.slice(-15, -1).map(h => ({
-      role: h.role === 'assistant' ? 'assistant' : 'user',
-      content: h.role === 'assistant' ? h.content : `[${h.role === 'owner' ? 'OWNER/SURAJ' : 'CONTACT'}]\n${h.content}`,
-    })),
-    { role: 'user', content: `[CONTACT - CURRENT MESSAGE]\n${message}\n[REASONING NORMALIZED]\n${normalizedMessage}` },
+    { role: 'system', content: `${personalityPrompt}\n\n${contextInfo}` },
+    { role: 'user', content: `Reply naturally as SK. Keep it brief and human.` },
   ];
-
-  // ── Call LLM ───────────────────────────────────────────────────────────────
+  
+  // ══════════════════════════════════════════════════════════════════════════════
+  // STEP 8: Call LLM
+  // ══════════════════════════════════════════════════════════════════════════════
+  
   let rawReply;
   try {
-    rawReply = await generateResponse({ messages, userId: chatId, metadata: { senderName } });
+    rawReply = await generateResponse({ 
+      messages, 
+      userId: chatId, 
+      metadata: { senderName, socialIntent: socialIntent.intent } 
+    });
   } catch (err) {
     console.error('[SKAgent] LLM error:', err.message);
-    // Do not turn infrastructure failures into a fake customer-support reply.
-    let fb = null;
-    if (mentionsOwner) {
-      fb = `Got it, I'll let ${ownerConfig.shortName} know about this.`;
-    } else if (/\b(hi+|hello|hey|namaste|hlo|hii|kaise\s+ho|kya\s+haal|good\s+(morning|evening|afternoon|night))\b/i.test(message)) {
-      fb = `Hey! Kay help pahije?`;
+    
+    // Fallback based on social intent
+    if (socialIntent.intent === 'GREETING') {
+      const reply = 'Hey 👋';
+      memory.addMessage(chatId, 'assistant', reply);
+      return { reply, taskAction: null, fileRequest: null };
     }
-    if (fb) memory.addMessage(chatId, 'assistant', fb);
-    return { reply: fb, noReply: !fb, taskAction: null, fileRequest: null };
+    
+    return { reply: null, noReply: true, taskAction: null, fileRequest: null };
   }
-
+  
+  // Check for NO_REPLY marker
   if (/<SK_NO_REPLY\s*\/?\s*>/i.test(rawReply)) {
-    return { reply: null, noReply: true, taskAction: null, fileRequest: null, intent: classifiedIntent };
+    console.log('[SKAgent] LLM returned NO_REPLY');
+    return { reply: null, noReply: true, taskAction: null, fileRequest: null };
   }
-
-  // ── Parse special blocks ───────────────────────────────────────────────────
+  
+  // ══════════════════════════════════════════════════════════════════════════════
+  // STEP 9: Parse special blocks (tasks, files)
+  // ══════════════════════════════════════════════════════════════════════════════
+  
   let taskAction = null;
   let fileRequest = null;
-
+  
   const taskBlock = parseBlock(rawReply, 'SK_TASK');
   if (taskBlock.found && taskBlock.data) {
     taskAction = taskBlock.data;
-  }
-
-  // Informational questions should be answered, not scheduled as notes.
-  if (taskAction && intent === 'chat' && !mentionsOwner) {
-    taskAction = null;
-  }
-
-  const fileBlock = parseBlock(rawReply, 'SK_FILE');
-  if (fileBlock.found && fileBlock.data) {
-    fileRequest = fileBlock.data;
-  }
-
-  const listBlock = parseBlock(rawReply, 'SK_LIST_TASKS');
-  if (listBlock.found && listBlock.isSelfClose) {
-    const taskList = scheduler.getTasksForChat(chatId);
-    const listText = taskList.length === 0
-      ? 'No active tasks.'
-      : scheduler.formatTaskList(taskList);
-    const cleaned = cleanReply(rawReply);
-    const reply = cleaned ? `${cleaned}\n\n${listText}` : listText;
-    memory.addMessage(chatId, 'assistant', reply);
-    return { reply, taskAction: null, fileRequest: null };
-  }
-
-  const cancelBlock = parseBlock(rawReply, 'SK_CANCEL_TASK');
-  if (cancelBlock.found && cancelBlock.data) {
-    const { taskId } = cancelBlock.data;
-    if (taskId === 'all') {
-      scheduler.cancelAllForChat(chatId);
-    } else {
-      scheduler.cancelTask(taskId);
-    }
-  }
-
-  // ── Post-process task: FORCE routing based on keywords ─────────────────────////
-  if (taskAction) {
-    // Sanitize description/message so LLM doesn't leak old sender names like "sangitahmaske"
+    
+    // Force routing based on keywords
+    const mentionsOwner = textMentionsOwner(message);
+    const saysSelfRemind = textSaysSelfRemind(message);
+    
     if (mentionsOwner && !saysSelfRemind) {
       taskAction.recipients = 'owner';
-      if (taskAction.message) {
-        const m = taskAction.message.toLowerCase();
-        // Only rewrite if the "to suraj" side isn't clear
-        if (/(sangita|rahul|priya|old sender|previous sender)/i.test(taskAction.message)) {
-          taskAction.message = `${senderName} sent a message: ${message}`;
-        }
-      }
-      taskAction.description = sanitizeDescription(taskAction.description, senderName, ownerConfig.shortName, message);
-      if (!taskAction.message) {
-        taskAction.message = `From ${senderName}: ${message}`;
-      }
     }
-
-    // If user typed reminders for themselves but LLM set owner, flip back
+    
     if (saysSelfRemind && !mentionsOwner) {
       taskAction.recipients = 'self';
     }
-
-    // Default fallback for task+time keywords but no recipients set:
+    
     if (!taskAction.recipients) {
       taskAction.recipients = mentionsOwner ? 'owner' : 'self';
     }
   }
-
+  
+  const fileBlock = parseBlock(rawReply, 'SK_FILE');
+  if (fileBlock.found && fileBlock.data) {
+    fileRequest = fileBlock.data;
+  }
+  
+  // ══════════════════════════════════════════════════════════════════════════════
+  // STEP 10: Clean and filter response
+  // ══════════════════════════════════════════════════════════════════════════════
+  
   let reply = cleanReply(rawReply);
-
-  // Guard: LLM returned only a task block with no text — generate a sensible fallback
-  if (!reply) {
-    if (taskAction) {
-      // Task was created for the owner
-      if (isOwnerRecipient(taskAction.recipients)) {
-        reply = `Got it, I'll let ${ownerConfig.shortName} know. 👍`;
+  
+  if (reply) {
+    // Apply response filter
+    const filterResult = responseFilter.filterResponse(message, reply, {
+      isQuestion: /\?/.test(message),
+      socialIntent: socialIntent.intent,
+    });
+    
+    if (filterResult.issues.length > 0) {
+      console.log(`[SKAgent] Response filter issues: ${filterResult.issues.join(', ')}`);
+    }
+    
+    // Use cleaned response
+    if (filterResult.cleanedResponse) {
+      reply = filterResult.cleanedResponse;
+    }
+    
+    // If response has critical issues, return fallback
+    if (filterResult.shouldRegenerate) {
+      console.log('[SKAgent] Response quality too low, using fallback');
+      
+      if (socialIntent.intent === 'GREETING') {
+        reply = 'Hey';
+      } else if (socialIntent.replyMode === 'PLAYFUL') {
+        reply = '😂';
+      } else if (taskAction) {
+        reply = 'Ok 👍';
       } else {
-        reply = 'Done! Reminder set. ✅';
+        reply = null;
       }
-    } else {
-      reply = null;
     }
   }
-
-  if (reply) memory.addMessage(chatId, 'assistant', reply);
-
-  return { reply, taskAction, fileRequest };
+  
+  // ══════════════════════════════════════════════════════════════════════════════
+  // STEP 11: Fallback if no reply generated
+  // ══════════════════════════════════════════════════════════════════════════════
+  
+  if (!reply && taskAction) {
+    const ownerCfg = getOwnerConfig();
+    if (isOwnerRecipient(taskAction.recipients)) {
+      reply = `Got it 👍`;
+    } else {
+      reply = 'Done ✅';
+    }
+  }
+  
+  // ══════════════════════════════════════════════════════════════════════════════
+  // STEP 12: Log metrics and return
+  // ══════════════════════════════════════════════════════════════════════════════
+  
+  const wordCount = reply ? reply.split(/\s+/).length : 0;
+  const hasQuestion = reply ? reply.includes('?') : false;
+  
+  console.log(`[SK] intent=${socialIntent.intent} lang=${contactProfile.preferredLanguage} mode=${socialIntent.replyMode} words=${wordCount} question=${hasQuestion}`);
+  
+  if (reply) {
+    memory.addMessage(chatId, 'assistant', reply);
+  }
+  
+  return { reply, taskAction, fileRequest, socialIntent: socialIntent.intent };
 }
 
-function sanitizeDescription(desc, senderName, ownerShort, originalMessage) {
-  // If LLM hallucinated an old sender name like "sangitahmaske" instead of current sender, fix it
-  let d = (desc || '').trim();
-  const weirdSender = /(sangitahmaske|unknown|oldcontact|previoussender)/i;
-  if (weirdSender.test(d)) {
-    d = d.replace(weirdSender, senderName);
-  }
-  // If description still looks wrong — build a clean one from original message
-  if (!d || /^\s*Task\s*$/i.test(d) || weirdSender.test(d)) {
-    const short = originalMessage.length > 80 ? originalMessage.slice(0, 77) + '...' : originalMessage;
-    d = `${senderName}: ${short}`;
-  }
-  return d;
-}
-
-// ── Schedule a task parsed from LLM output ────────────────────────────────────
+// ── Schedule task ───────────────────────────────────────────────────────────────
 
 function isOwnerRecipient(recipients) {
   if (!recipients) return false;
@@ -569,6 +440,7 @@ function isOwnerRecipient(recipients) {
 }
 
 function scheduleTask(chatId, senderName, taskAction) {
+  const ownerConfig = getOwnerConfig();
   const timeExpr = taskAction.timeExpression || '';
   const parsed = timeExpr ? scheduler.parseTimeExpression(timeExpr) : null;
   const recipients = taskAction.recipients || 'self';
@@ -595,4 +467,29 @@ function scheduleTask(chatId, senderName, taskAction) {
   });
 }
 
-module.exports = { processMessage, scheduleTask, setOwnerConfig, getOwnerConfig, isOwnerRecipient, buildSystemPrompt };
+// ── Exports ─────────────────────────────────────────────────────────────────────
+
+// Re-export personaEngine owner config functions
+function setOwnerConfigWrapper(cfg) {
+  const personaEngine = require('./personaEngine');
+  personaEngine.setOwnerConfig(cfg);
+  
+  // Also update reply policy
+  if (cfg.number) {
+    replyPolicy.setAutoReply(true); // Default to enabled
+  }
+}
+
+module.exports = {
+  processMessage,
+  scheduleTask,
+  setOwnerConfig: setOwnerConfigWrapper,
+  getOwnerConfig,
+  isOwnerRecipient,
+  
+  // Expose new modules for external use
+  replyPolicy,
+  styleProfile,
+  dialectMemory,
+  responseFilter,
+};
