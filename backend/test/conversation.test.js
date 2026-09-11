@@ -6,7 +6,8 @@ const { classifyMessage, isAcknowledgement } = require('../src/agent/intentClass
 const state = require('../src/agent/conversationState');
 const { buildConversationContext } = require('../src/agent/contextBuilder');
 const memory = require('../src/memory/conversationMemory');
-const { processMessage, buildSystemPrompt } = require('../src/agent/skAgent');
+const { processMessage, runtimePrompt } = require('../src/agent/skAgent');
+const consentGate = require('../src/agent/consentGate');
 
 test('normalizes Roman Marathi without changing the original', () => {
   const original = 'tula ntr pathvte me ek vel srv college list krte brobr mg sang';
@@ -18,12 +19,10 @@ test('normalizes direct Roman Marathi follow-ups for the LLM', () => {
   assert.equal(normalizeForReasoning('Bolav na tele kuth gela'), 'Bolav na tyala kuthe gela');
 });
 
-test('prompt prevents generic acknowledgement replies to requests', () => {
-  const prompt = buildSystemPrompt('Contact', '10:00 AM');
-  assert.match(prompt, /Contact is the current sender/);
-  assert.match(prompt, /Only use an acknowledgement when the current message is genuinely an acknowledgement/);
-  assert.match(prompt, /bolav na/);
-  assert.match(prompt, /earlier assistant replies as fallible context/);
+test('runtime prompt is compact and conversation-focused', () => {
+  assert.match(runtimePrompt, /understand what the latest message actually means/);
+  assert.match(runtimePrompt, /<SK_NO_REPLY>/);
+  assert.doesNotMatch(runtimePrompt, /PATTERN A|RELATIONSHIP-SPECIFIC|Example:/i);
 });
 
 test('classifies common WhatsApp fragments contextually', () => {
@@ -61,15 +60,20 @@ test('merges consecutive WhatsApp messages into one thought', () => {
 });
 
 test('returns no reply for a standalone acknowledgement', async () => {
-  const result = await processMessage('agent-fast-path-test', 'Contact', 'Br');
+  const chatId = 'agent-fast-path-test';
+  consentGate.set(chatId, consentGate.CONSENT_STATES.ALLOWED);
+  const result = await processMessage(chatId, 'Contact', 'Br');
   assert.equal(result.noReply, true);
   assert.equal(result.reply, null);
   memory.clearHistory('agent-fast-path-test');
+  consentGate.reset();
 });
 
 test('understands a date answer from the previous question', async () => {
   const chatId = 'agent-date-fast-path-test';
+  consentGate.set(chatId, consentGate.CONSENT_STATES.ALLOWED);
   memory.clearHistory(chatId);
+  consentGate.reset();
   memory.addMessage(chatId, 'owner', 'final merit list kadhi ahe');
   const result = await processMessage(chatId, 'Contact', '11');
   assert.match(result.reply, /11/);
@@ -79,9 +83,11 @@ test('understands a date answer from the previous question', async () => {
 
 test('answers corrections as corrections, not translations', async () => {
   const chatId = 'agent-correction-fast-path-test';
+  consentGate.set(chatId, consentGate.CONSENT_STATES.ALLOWED);
   memory.clearHistory(chatId);
   const result = await processMessage(chatId, 'Contact', 'Chukich sangte te');
   assert.match(result.reply, /chukicha hota/i);
   assert.doesNotMatch(result.reply, /means|meaning|translation/i);
   memory.clearHistory(chatId);
+  consentGate.reset();
 });

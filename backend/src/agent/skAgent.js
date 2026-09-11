@@ -13,6 +13,7 @@
  */
 
 const { generateResponse } = require('./llmRouter');
+const consentGate = require('./consentGate');
 const memory = require('../memory/conversationMemory');
 const scheduler = require('./taskScheduler');
 const { normalizeForReasoning } = require('./messageNormalizer');
@@ -20,13 +21,15 @@ const { buildConversationContext } = require('./contextBuilder');
 const conversationState = require('./conversationState');
 const { tryReply } = require('./simpleBrain');
 
-// New personality modules
-const { buildPersonalityPrompt, buildContactContext, setOwnerConfig, getOwnerConfig } = require('./personaEngine');
+const { setOwnerConfig, getOwnerConfig } = require('./personaEngine');
 const { classifySocialIntent } = require('./socialIntent');
 const styleProfile = require('./styleProfile');
 const dialectMemory = require('./dialectMemory');
 const replyPolicy = require('./replyPolicy');
 const responseFilter = require('./responseFilter');
+const { classifyReplyPolicy } = require('./messagePolicy');
+
+const SK_RUNTIME_PROMPT = "You are SK, Mr. Suraj's WhatsApp AI assistant. Read the recent conversation and understand what the latest message actually means before replying. Reply naturally and directly in the sender's language/style. Keep casual replies very short. Do not explain words unless explicitly asked for their meaning. Do not repeat the sender's message. Do not behave like customer support. Do not ask unnecessary questions. Do not keep the conversation alive artificially. If no reply is naturally required, return <SK_NO_REPLY>. If directly asked whether you are Suraj, say you are Mr. Suraj's AI assistant. If asked where Suraj is, say Suraj is busy. Return only the final reply.";
 
 // ── Fast-path patterns ──────────────────────────────────────────────────────────
 
@@ -137,7 +140,7 @@ function cleanReply(reply) {
 
 // ── Main process function ──────────────────────────────────────────────────────
 
-async function processMessage(chatId, senderName, message, fromNumber = null) {
+async function processMessage(chatId, senderName, message, fromNumber = null, options = {}) {
   const now = new Date().toLocaleString('en-IN', {
     dateStyle: 'short', timeStyle: 'short', hour12: true,
   });
@@ -186,26 +189,76 @@ async function processMessage(chatId, senderName, message, fromNumber = null) {
   const history = memory.getHistory(chatId);
   
   // ══════════════════════════════════════════════════════════════════════════════
-  // STEP 4: Social intent classification
+  // STEP 4: Reply policy and consent gate
   // ══════════════════════════════════════════════════════════════════════════════
-  
   const previousMessages = history.slice(0, -1);
-  const previousMessage = previousMessages.length > 0 
-    ? previousMessages[previousMessages.length - 1] 
-    : null;
   
+  const messageTypePolicy = classifyReplyPolicy({ text: message, senderName, type: 'chat' }, previousMessages.map(item => item.content));
+  if (messageTypePolicy === 'NO_REPLY') {
+    return {
+      reply: null,
+      noReply: true,
+      reason: 'MESSAGE_POLICY_NO_REPLY',
+    };
+  }
+
+  if (options.isGroup) {
+    return { reply: null, noReply: true, reason: 'GROUP_CONSENT_DISABLED' };
+  }
+
+  let consent = consentGate.get(chatId);
+  if (consentGate.isRevokeCommand(message) && consent.state === consentGate.CONSENT_STATES.ALLOWED) {
+    consent = consentGate.set(chatId, consentGate.CONSENT_STATES.DENIED);
+    memory.addMessage(chatId, 'assistant', 'Okay');
+    return { reply: 'Okay', noReply: false, consentState: consent.state };
+  }
+
+  if (consent.state === consentGate.CONSENT_STATES.DENIED) {
+    if (consentGate.isEnableCommand(message)) {
+      consent = consentGate.set(chatId, consentGate.CONSENT_STATES.ALLOWED);
+      memory.addMessage(chatId, 'assistant', 'Okay');
+      return { reply: 'Okay', noReply: false, consentState: consent.state };
+    }
+    return { reply: null, noReply: true, reason: 'CONSENT_DENIED', consentState: consent.state };
+  }
+
+  if (consent.state === consentGate.CONSENT_STATES.PENDING) {
+    const decision = consentGate.classifyDecision(message);
+    if (decision === 'AGREE') {
+      consent = consentGate.set(chatId, consentGate.CONSENT_STATES.ALLOWED);
+      memory.addMessage(chatId, 'assistant', 'Okay');
+      return { reply: 'Okay', noReply: false, consentState: consent.state };
+    }
+    if (decision === 'DISAGREE') {
+      consent = consentGate.set(chatId, consentGate.CONSENT_STATES.DENIED);
+      memory.addMessage(chatId, 'assistant', 'Okay');
+      return { reply: 'Okay', noReply: false, consentState: consent.state };
+    }
+    const clarification = consentGate.disclosure(message, contactProfile.preferredLanguage);
+    memory.addMessage(chatId, 'assistant', clarification);
+    return { reply: clarification, noReply: false, consentState: consent.state };
+  }
+
+  const firstInteraction = consent.state === consentGate.CONSENT_STATES.UNKNOWN;
+  const finishFirstInteraction = reply => {
+    if (!firstInteraction) return reply;
+    consentGate.set(chatId, consentGate.CONSENT_STATES.PENDING);
+    return `${reply || 'Okay'} ${consentGate.disclosure(message, contactProfile.preferredLanguage)}`;
+  };
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // STEP 5: Social intent classification
+  // ══════════════════════════════════════════════════════════════════════════════
+  const previousMessage = previousMessages.length > 0
+    ? previousMessages[previousMessages.length - 1]
+    : null;
   const socialIntent = classifySocialIntent(message, {
     previousMessage: previousMessage?.content,
     previousSenderRole: previousMessage?.role,
     messageCount: previousMessages.length,
   });
-  
   console.log(`[SKAgent] Social intent: ${socialIntent.intent}, mode: ${socialIntent.replyMode}`);
-  
-  // ══════════════════════════════════════════════════════════════════════════════
-  // STEP 5: Reply policy check
-  // ══════════════════════════════════════════════════════════════════════════════
-  
+
   const policyDecision = replyPolicy.shouldReply(message, {
     chatId,
     senderName,
@@ -215,16 +268,9 @@ async function processMessage(chatId, senderName, message, fromNumber = null) {
     contactProfile,
     isGroup: false,
   });
-  
   console.log(`[SKAgent] Reply policy: ${policyDecision.reason}, should reply: ${policyDecision.shouldReply}`);
-  
   if (!policyDecision.shouldReply) {
-    return {
-      reply: null,
-      noReply: true,
-      reason: policyDecision.reason,
-      socialIntent: socialIntent.intent,
-    };
+    return { reply: null, noReply: true, reason: policyDecision.reason, socialIntent: socialIntent.intent };
   }
   
   // ══════════════════════════════════════════════════════════════════════════════
@@ -235,7 +281,7 @@ async function processMessage(chatId, senderName, message, fromNumber = null) {
   
   // Time query
   if (intent === 'time') {
-    const reply = `${timeOnly}`;
+    const reply = finishFirstInteraction(`${timeOnly}`);
     memory.addMessage(chatId, 'assistant', reply);
     return { reply, taskAction: null, fileRequest: null };
   }
@@ -243,9 +289,9 @@ async function processMessage(chatId, senderName, message, fromNumber = null) {
   // List tasks
   if (intent === 'list_tasks') {
     const taskList = scheduler.getTasksForChat(chatId);
-    const reply = taskList.length === 0
+    const reply = finishFirstInteraction(taskList.length === 0
       ? 'No tasks'
-      : scheduler.formatTaskList(taskList);
+      : scheduler.formatTaskList(taskList));
     memory.addMessage(chatId, 'assistant', reply);
     return { reply, taskAction: null, fileRequest: null };
   }
@@ -253,14 +299,14 @@ async function processMessage(chatId, senderName, message, fromNumber = null) {
   // Cancel tasks
   if (intent === 'cancel_tasks') {
     const count = scheduler.cancelAllForChat(chatId);
-    const reply = count > 0 ? `Done, cancelled ${count}` : 'No tasks';
+    const reply = finishFirstInteraction(count > 0 ? `Done, cancelled ${count}` : 'No tasks');
     memory.addMessage(chatId, 'assistant', reply);
     return { reply, taskAction: null, fileRequest: null };
   }
   
   // File request
   if (intent === 'file') {
-    const reply = `Checking...`;
+    const reply = finishFirstInteraction('Checking...');
     memory.addMessage(chatId, 'assistant', reply);
     return { reply, taskAction: null, fileRequest: buildFileRequest(message) };
   }
@@ -281,10 +327,16 @@ async function processMessage(chatId, senderName, message, fromNumber = null) {
   if (simpleResult.usedSimpleBrain) {
     console.log(`[SKAgent] SimpleBrain match: ${simpleResult.source}`);
     if (simpleResult.noReply || !simpleResult.reply) {
+      if (firstInteraction) {
+        const reply = finishFirstInteraction(null);
+        memory.addMessage(chatId, 'assistant', reply);
+        return { reply, taskAction: null, fileRequest: null, socialIntent: socialIntent.intent };
+      }
       return { reply: null, noReply: true, reason: simpleResult.source, socialIntent: socialIntent.intent };
     }
-    memory.addMessage(chatId, 'assistant', simpleResult.reply);
-    return { reply: simpleResult.reply, taskAction: null, fileRequest: null, socialIntent: socialIntent.intent, simpleBrain: simpleResult.source };
+    const reply = finishFirstInteraction(simpleResult.reply);
+    memory.addMessage(chatId, 'assistant', reply);
+    return { reply, taskAction: null, fileRequest: null, socialIntent: socialIntent.intent, simpleBrain: simpleResult.source };
   }
   
   console.log(`[SKAgent] SimpleBrain no match (${simpleResult.source}) → falling back to LLM`);
@@ -301,39 +353,15 @@ async function processMessage(chatId, senderName, message, fromNumber = null) {
   });
   const state = conversationState.getState(chatId);
   
-  // Build system prompt with personality + context summary (NOT history dump)
-  const personalityPrompt = buildPersonalityPrompt(contactProfile, now);
-  const contactContext = buildContactContext(contactProfile, dialectPhrases);
   const convIntel = buildConversationContext(history, state, message, normalizedMessage);
-  
-  // Pull relationship highlights to the TOP so LLM can't miss them
-  const relationshipMatches = convIntel.match(/👥[^\n]*/g) || [];
-  const relationshipHighlight = relationshipMatches.length > 0
-    ? `\n⚠️⚠️⚠️  KEY CONTEXT: ${relationshipMatches.join(' ')}  ⚠️⚠️⚠️\n`
-    : '';
-  const emotionMatches = convIntel.match(/💭[^\n]*/g) || [];
-  const emotionHighlight = emotionMatches.length > 0
-    ? `\n💭 MOOD CONTEXT: ${emotionMatches.join(' ')}\n`
-    : '';
-  
-  const systemPrompt = `${personalityPrompt}
-
-${relationshipHighlight}${emotionHighlight}
-═════════════════════════════════════════════════════════════
-CONTACT CONTEXT:
-${contactContext}
-
-${convIntel}
-
-SOCIAL INTENT: ${socialIntent.intent}
-REPLY MODE: ${socialIntent.replyMode}
-${policyDecision.avoidQuestion ? '⚠ AVOID ASKING QUESTIONS — already asked too many recently.' : ''}
-═════════════════════════════════════════════════════════════`;
+  const relevantDialect = Object.entries(dialectPhrases).slice(0, 12)
+    .map(([phrase, data]) => `${phrase} = ${data.meaning}`).join('; ');
+  const systemPrompt = SK_RUNTIME_PROMPT;
 
   // Build PROPER CHAT HISTORY as alternating user/assistant messages
   // This is CRITICAL — LLMs are trained on this format, not text blobs
   // NOTE: history already includes the current message (added above), so slice up to -1
-  const historyWindow = history.slice(-15, -1);
+  const historyWindow = history.slice(-12, -1);
   const chatHistory = [];
   
   for (const h of historyWindow) {
@@ -355,7 +383,7 @@ ${policyDecision.avoidQuestion ? '⚠ AVOID ASKING QUESTIONS — already asked t
   // Final messages array: system prompt first, then chat history
   const messages = [
     { role: 'system', content: systemPrompt },
-    ...chatHistory,
+    { role: 'user', content: `CONTACT LANGUAGE: ${contactProfile.preferredLanguage || 'unknown'}\nCONSENT STATE: ${consent.state}\nKNOWN RELEVANT DIALECT: ${relevantDialect || 'none'}\nSHORT CONVERSATION STATE: ${convIntel.slice(0, 1200)}\nRECENT CHAT:\n${chatHistory.slice(0, -1).map(item => `${item.role}: ${item.content}`).join('\n')}\nCURRENT MESSAGE: ${message}` },
   ];
   
   // ══════════════════════════════════════════════════════════════════════════════
@@ -374,7 +402,7 @@ ${policyDecision.avoidQuestion ? '⚠ AVOID ASKING QUESTIONS — already asked t
     
     // Fallback based on social intent
     if (socialIntent.intent === 'GREETING') {
-      const reply = 'Hey 👋';
+      const reply = finishFirstInteraction('Hey');
       memory.addMessage(chatId, 'assistant', reply);
       return { reply, taskAction: null, fileRequest: null };
     }
@@ -385,6 +413,11 @@ ${policyDecision.avoidQuestion ? '⚠ AVOID ASKING QUESTIONS — already asked t
   // Check for NO_REPLY marker
   if (/<SK_NO_REPLY\s*\/?\s*>/i.test(rawReply)) {
     console.log('[SKAgent] LLM returned NO_REPLY');
+    if (firstInteraction) {
+      const reply = finishFirstInteraction(null);
+      memory.addMessage(chatId, 'assistant', reply);
+      return { reply, noReply: false, taskAction: null, fileRequest: null };
+    }
     return { reply: null, noReply: true, taskAction: null, fileRequest: null };
   }
   
@@ -427,6 +460,8 @@ ${policyDecision.avoidQuestion ? '⚠ AVOID ASKING QUESTIONS — already asked t
   
   let reply = cleanReply(rawReply);
   
+  reply = finishFirstInteraction(reply);
+
   if (reply) {
     // Apply response filter
     const filterResult = responseFilter.filterResponse(message, reply, {
@@ -539,6 +574,7 @@ function setOwnerConfigWrapper(cfg) {
 
 module.exports = {
   processMessage,
+  runtimePrompt: SK_RUNTIME_PROMPT,
   scheduleTask,
   setOwnerConfig: setOwnerConfigWrapper,
   getOwnerConfig,

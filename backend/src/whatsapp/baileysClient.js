@@ -248,7 +248,7 @@ async function processIncomingMessage(message) {
     const started = Date.now();
     let result;
     const fromNumber = chatId.split('@')[0]; // Extract phone number from chatId
-    try { result = await skAgent.processMessage(chatId, senderName, agentMessage, fromNumber); }
+    try { result = await skAgent.processMessage(chatId, senderName, agentMessage, fromNumber, { isGroup }); }
     catch (error) { logger.error({ err: error.message }, 'agent processing failed'); result = { reply: 'Sorry, I had an error processing your message. Please try again.' }; }
     let responseText = result.reply || null;
     if (result.taskAction) {
