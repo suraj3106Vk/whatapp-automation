@@ -16,6 +16,9 @@ const { generateResponse } = require('./llmRouter');
 const memory = require('../memory/conversationMemory');
 const scheduler = require('./taskScheduler');
 const { normalizeForReasoning } = require('./messageNormalizer');
+const { buildConversationContext } = require('./contextBuilder');
+const conversationState = require('./conversationState');
+const { tryReply } = require('./simpleBrain');
 
 // New personality modules
 const { buildPersonalityPrompt, buildContactContext, setOwnerConfig, getOwnerConfig } = require('./personaEngine');
@@ -263,42 +266,96 @@ async function processMessage(chatId, senderName, message, fromNumber = null) {
   }
   
   // ══════════════════════════════════════════════════════════════════════════════
-  // STEP 7: Build LLM context with personality
+  // STEP 7: SIMPLE BRAIN FIRST — Deterministic pattern matching (NO LLM)
+  //         Only fall back to LLM if Simple Brain has no match for the message.
+  // ══════════════════════════════════════════════════════════════════════════════
+
+  const simpleResult = tryReply({
+    chatId,
+    senderName,
+    message,
+    history,
+    socialIntent: socialIntent.intent,
+  });
+  
+  if (simpleResult.usedSimpleBrain) {
+    console.log(`[SKAgent] SimpleBrain match: ${simpleResult.source}`);
+    if (simpleResult.noReply || !simpleResult.reply) {
+      return { reply: null, noReply: true, reason: simpleResult.source, socialIntent: socialIntent.intent };
+    }
+    memory.addMessage(chatId, 'assistant', simpleResult.reply);
+    return { reply: simpleResult.reply, taskAction: null, fileRequest: null, socialIntent: socialIntent.intent, simpleBrain: simpleResult.source };
+  }
+  
+  console.log(`[SKAgent] SimpleBrain no match (${simpleResult.source}) → falling back to LLM`);
+  
+  // ══════════════════════════════════════════════════════════════════════════════
+  // STEP 8: Build LLM context + chat history (FALLBACK ONLY)
   // ══════════════════════════════════════════════════════════════════════════════
   
+  // Update conversation state for context analysis
+  conversationState.updateState(chatId, { 
+    original: message, 
+    normalized: normalizedMessage, 
+    role: 'contact' 
+  });
+  const state = conversationState.getState(chatId);
+  
+  // Build system prompt with personality + context summary (NOT history dump)
   const personalityPrompt = buildPersonalityPrompt(contactProfile, now);
   const contactContext = buildContactContext(contactProfile, dialectPhrases);
+  const convIntel = buildConversationContext(history, state, message, normalizedMessage);
   
-  // Build conversation history (short window)
-  const recentHistory = history.slice(-12, -1).map(h => ({
-    role: h.role === 'assistant' ? 'assistant' : 'user',
-    content: h.role === 'assistant' 
-      ? h.content 
-      : `[${h.role === 'owner' ? 'OWNER/SURAJ' : 'CONTACT'}]\n${h.content}`,
-  }));
+  // Pull relationship highlights to the TOP so LLM can't miss them
+  const relationshipMatches = convIntel.match(/👥[^\n]*/g) || [];
+  const relationshipHighlight = relationshipMatches.length > 0
+    ? `\n⚠️⚠️⚠️  KEY CONTEXT: ${relationshipMatches.join(' ')}  ⚠️⚠️⚠️\n`
+    : '';
+  const emotionMatches = convIntel.match(/💭[^\n]*/g) || [];
+  const emotionHighlight = emotionMatches.length > 0
+    ? `\n💭 MOOD CONTEXT: ${emotionMatches.join(' ')}\n`
+    : '';
   
-  const contextInfo = `
-RECENT CONVERSATION:
-${recentHistory.map(h => `${h.role}: ${h.content}`).join('\n')}
+  const systemPrompt = `${personalityPrompt}
 
+${relationshipHighlight}${emotionHighlight}
+═════════════════════════════════════════════════════════════
 CONTACT CONTEXT:
 ${contactContext}
 
-CURRENT MESSAGE:
-[CONTACT - ${senderName}]
-${message}
+${convIntel}
 
-[NORMALIZED WITH DIALECT]
-${normalizedMessage}
-
-SOCIAL INTENT DETECTED: ${socialIntent.intent}
+SOCIAL INTENT: ${socialIntent.intent}
 REPLY MODE: ${socialIntent.replyMode}
-${policyDecision.avoidQuestion ? 'NOTE: Avoid asking questions (already asked too many recently)\n' : ''}
-`;
+${policyDecision.avoidQuestion ? '⚠ AVOID ASKING QUESTIONS — already asked too many recently.' : ''}
+═════════════════════════════════════════════════════════════`;
+
+  // Build PROPER CHAT HISTORY as alternating user/assistant messages
+  // This is CRITICAL — LLMs are trained on this format, not text blobs
+  // NOTE: history already includes the current message (added above), so slice up to -1
+  const historyWindow = history.slice(-15, -1);
+  const chatHistory = [];
   
+  for (const h of historyWindow) {
+    if (h.role === 'assistant') {
+      chatHistory.push({ role: 'assistant', content: h.content });
+    } else {
+      const msgSender = h.role === 'owner' ? ownerConfig.shortName : (h.senderName || senderName);
+      chatHistory.push({ role: 'user', content: `[${msgSender}]: ${h.content}` });
+    }
+  }
+  
+  // Add CURRENT message as the final user message (the one to respond to)
+  chatHistory.push({ 
+    role: 'user', 
+    content: `[${senderName}]: ${message}` + 
+             (normalizedMessage !== message ? `\n(Normalized: ${normalizedMessage})` : '')
+  });
+  
+  // Final messages array: system prompt first, then chat history
   const messages = [
-    { role: 'system', content: `${personalityPrompt}\n\n${contextInfo}` },
-    { role: 'user', content: `Reply naturally as SK. Keep it brief and human.` },
+    { role: 'system', content: systemPrompt },
+    ...chatHistory,
   ];
   
   // ══════════════════════════════════════════════════════════════════════════════

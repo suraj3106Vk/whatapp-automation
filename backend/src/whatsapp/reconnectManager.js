@@ -11,9 +11,16 @@ function isAuthFailure(error) {
   const statusCode = error?.output?.statusCode ?? error?.statusCode;
   if (statusCode === undefined) return false;
 
-  return statusCode === 401 ||
-    statusCode === DisconnectReason.loggedOut ||
-    statusCode === DisconnectReason.badSession && /invalid session|not-authorized|not authorized|session.*invalid/i.test(String(error?.message || ''));
+  // 401 or explicit loggedOut
+  if (statusCode === 401 || statusCode === DisconnectReason.loggedOut) return true;
+
+  // badSession always means the on-disk session is corrupt — no point retrying.
+  // Previously required a message-text regex match, which missed some Baileys
+  // variants.  Treat any badSession disconnect as an auth failure so we wipe
+  // the session and prompt for QR re-pair instead of looping forever.
+  if (statusCode === DisconnectReason.badSession) return true;
+
+  return false;
 }
 
 function getDelay(attempt) {

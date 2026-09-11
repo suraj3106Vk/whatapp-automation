@@ -155,7 +155,8 @@ if (GEMINI_KEYS.length > 1) console.log(`[LLM] ✅ Gemini rotation ENABLED (roun
 
 // ── Token budget ───────────────────────────────────────────────────────────────
 // Rough 4-chars-per-token estimate. groq/compound limit ~30k tokens total.
-const MAX_PROMPT_CHARS = 5000; // keep compound requests small and leave room for output
+// 9000 chars ≈ 2250 tokens, leaving plenty of room for 500 output tokens.
+const MAX_PROMPT_CHARS = 9000;
 
 function trimMessages(messages) {
   // Always keep system prompt + last user message at minimum

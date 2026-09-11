@@ -29,7 +29,40 @@ const memory = require('../memory/conversationMemory');
 const OWNER_NAME = process.env.OWNER_NAME || 'Suraj Zalke';
 const OWNER_SHORT_NAME = process.env.OWNER_SHORT_NAME || 'Suraj';
 const AUTH_PATH = getAuthPath();
-const logger = pino({ level: process.env.LOG_LEVEL || 'warn' });
+// ── Pino logger with Signal Protocol noise filter ─────────────────────────────
+// Baileys logs Bad MAC / MessageCounterError / decrypt failures from libsignal
+// internally. These are harmless (ratchet-key stale/already-used), the affected
+// messages arrive with no text and get dropped by WA_EXTRACT.  We suppress them
+// here so they don't flood production logs.
+const SIGNAL_NOISE_RE = /bad mac|messagecountererror|key used already|never filled|failed to decrypt|decrypt.*session|session.*decrypt/i;
+
+const _pinoBase = pino({ level: process.env.LOG_LEVEL || 'warn' });
+const logger = _pinoBase.child(
+  {},
+  {
+    // Intercept every log call; if the msg or any passed object mentions Signal
+    // crypto problems, discard it silently.
+    redact: [],
+    // pino doesn't have a native "filter" hook, so we override the transport
+    // methods at the child level via a custom mixin approach.
+  }
+);
+
+// Wrap the low-level pino write so we can drop Signal noise before it reaches
+// stdout/stderr.  This is done once on the shared logger instance that is also
+// passed into makeWASocket.
+(function patchLoggerForSignalNoise(log) {
+  const levels = ['trace', 'debug', 'info', 'warn', 'error', 'fatal'];
+  for (const lvl of levels) {
+    const original = log[lvl].bind(log);
+    log[lvl] = function (...args) {
+      // args can be (obj, msg, ...interpolation) or (msg, ...interpolation)
+      const combined = args.map(a => (typeof a === 'object' && a !== null ? JSON.stringify(a) : String(a ?? ''))).join(' ');
+      if (SIGNAL_NOISE_RE.test(combined)) return; // drop silently
+      return original(...args);
+    };
+  }
+}(logger));
 let io;
 let socket;
 let starting = false;
