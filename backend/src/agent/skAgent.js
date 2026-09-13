@@ -86,6 +86,8 @@ const FILE_KEYWORDS = [
   /\b(pdf|image|img|photo|pic|document|doc|file|catalogue|menu|invoice|brochure|card)\b/i,
 ];
 
+const EXPLICIT_FILE_REQUEST = /\b(?:send|share|bhej(?:o|na)?|pathav|forward|upload)\b.{0,80}\b(?:pdf|image|img|photo|pic|document|doc|file|catalogue|menu|invoice|brochure|card)\b|\b(?:pdf|image|img|photo|pic|document|doc|file|catalogue|menu|invoice|brochure|card)\b.{0,80}\b(?:send|share|bhej(?:o|na)?|pathav|forward|upload)\b/i;
+
 const FILE_STOP_WORDS = new Set([
   'send', 'share', 'please', 'can', 'you', 'me', 'the', 'a', 'an', 'my', 'to',
   'bhejo', 'bhejna', 'mujhe', 'ek', 'do', 'na', 'file', 'document', 'image',
@@ -128,8 +130,8 @@ function detectIntent(text, options = {}) {
   if (CANCEL_KEYWORDS.some(r => r.test(text))) return 'cancel_tasks';
   if (TIME_KEYWORDS.test(text)) return 'time';
   if (TASK_KEYWORDS.some(r => r.test(text))) return 'task';
-  if (options.hasMedia && !/(?:send|share|bhej|pathav|forward|upload|save|keep|store)\b/i.test(text)) return 'chat';
-  if (FILE_KEYWORDS.some(r => r.test(text))) return 'file';
+  if (options.hasMedia && !EXPLICIT_FILE_REQUEST.test(text)) return 'chat';
+  if (EXPLICIT_FILE_REQUEST.test(text) && FILE_KEYWORDS.some(r => r.test(text))) return 'file';
   return 'chat';
 }
 

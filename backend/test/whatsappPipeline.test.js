@@ -82,6 +82,13 @@ test('document-content questions do not trigger outbound file lookup', async () 
   assert.notEqual(result.reply, 'Checking...');
 });
 
+test('follow-up document and image questions do not trigger file lookup', async () => {
+  for (const question of ['documents madhe kay ahe?', 'what is inside this image?', 'photo madhla मजकूर sang']) {
+    const result = await processMessage(`media-follow-up-${question}`, 'Contact', question);
+    assert.equal(result.fileRequest, null);
+  }
+});
+
 test('extracted document content reaches analysis instead of media acknowledgement', async () => {
   const result = await processMessage('media-analysis-test', 'Contact', '[MEDIA_CONTENT]\nPDF content:\nAlgebra formulas and examples', null, {
     hasMedia: true,
