@@ -128,7 +128,7 @@ function detectIntent(text, options = {}) {
   if (CANCEL_KEYWORDS.some(r => r.test(text))) return 'cancel_tasks';
   if (TIME_KEYWORDS.test(text)) return 'time';
   if (TASK_KEYWORDS.some(r => r.test(text))) return 'task';
-  if (options.hasMedia && !/(?:send|share|bhej|pathav|forward|upload|save|keep|store)/i.test(text)) return 'chat';
+  if (options.hasMedia && !/(?:send|share|bhej|pathav|forward|upload|save|keep|store)\b/i.test(text)) return 'chat';
   if (FILE_KEYWORDS.some(r => r.test(text))) return 'file';
   return 'chat';
 }
@@ -372,7 +372,7 @@ async function processMessage(chatId, senderName, message, fromNumber = null, op
   }
   
   // File request
-  if (intent === 'file') {
+  if (intent === 'file' && (!options.hasMedia || /(?:send|share|bhej|pathav|forward|upload|save|keep|store)\b/i.test(message))) {
     const reply = finishFirstInteraction('Checking...');
     memory.addMessage(chatId, 'assistant', reply);
     return { reply, taskAction: null, fileRequest: buildFileRequest(message) };

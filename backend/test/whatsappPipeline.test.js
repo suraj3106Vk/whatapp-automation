@@ -72,6 +72,16 @@ test('received documents do not trigger outbound file lookup', async () => {
   assert.match(result.reply, /Document milala/);
 });
 
+test('document-content questions do not trigger outbound file lookup', async () => {
+  const result = await processMessage('media-question-test', 'Contact', 'Notes.pdf: what is inside this document?', null, {
+    hasMedia: true,
+    mediaType: 'document',
+    fileName: 'Notes.pdf',
+  });
+  assert.equal(result.fileRequest, null);
+  assert.notEqual(result.reply, 'Checking...');
+});
+
 test('contact lookup returns only an exact cached WhatsApp contact', () => {
   contactDirectory.clear();
   assert.equal(contactDirectory.find('Sanket'), null);
