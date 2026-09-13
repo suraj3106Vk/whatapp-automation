@@ -25,6 +25,12 @@ test('runtime prompt is compact and conversation-focused', () => {
   assert.doesNotMatch(runtimePrompt, /PATTERN A|RELATIONSHIP-SPECIFIC|Example:/i);
 });
 
+test('plain greetings do not inject unrelated food dialect hints', () => {
+  const agent = require('../src/agent/skAgent');
+  const prompt = agent.buildSystemPrompt();
+  assert.doesNotMatch(prompt, /bati khaldo/);
+});
+
 test('classifies common WhatsApp fragments contextually', () => {
   assert.equal(classifyMessage('Br', 'Br'), 'ACKNOWLEDGEMENT');
   assert.equal(classifyMessage('Pathvlin', 'pathavlin'), 'PROMISE_FUTURE_ACTION');

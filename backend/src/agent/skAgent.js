@@ -431,7 +431,10 @@ async function processMessage(chatId, senderName, message, fromNumber = null, op
   const state = conversationState.getState(chatId);
   
   const convIntel = buildConversationContext(history, state, message, normalizedMessage);
-  const relevantDialect = Object.entries(dialectPhrases).slice(0, 12)
+  const lowerMessage = message.toLowerCase();
+  const relevantDialect = Object.entries(dialectPhrases)
+    .filter(([phrase]) => lowerMessage.includes(phrase.toLowerCase()))
+    .slice(0, 12)
     .map(([phrase, data]) => `${phrase} = ${data.meaning}`).join('; ');
   const systemPrompt = buildSystemPrompt();
 
