@@ -123,11 +123,12 @@ const SELF_REMIND_PATTERNS = [
 
 // ── Helper functions ────────────────────────────────────────────────────────────
 
-function detectIntent(text) {
+function detectIntent(text, options = {}) {
   if (LIST_KEYWORDS.some(r => r.test(text))) return 'list_tasks';
   if (CANCEL_KEYWORDS.some(r => r.test(text))) return 'cancel_tasks';
   if (TIME_KEYWORDS.test(text)) return 'time';
   if (TASK_KEYWORDS.some(r => r.test(text))) return 'task';
+  if (options.hasMedia && !/(?:send|share|bhej|pathav|forward|upload|save|keep|store)/i.test(text)) return 'chat';
   if (FILE_KEYWORDS.some(r => r.test(text))) return 'file';
   return 'chat';
 }
@@ -335,7 +336,15 @@ async function processMessage(chatId, senderName, message, fromNumber = null, op
   // STEP 6: Fast-path intents (no LLM needed)
   // ══════════════════════════════════════════════════════════════════════════════
   
-  const intent = detectIntent(message);
+  const intent = detectIntent(message, options);
+
+  if (options.hasMedia && ['image', 'document', 'video', 'audio'].includes(options.mediaType) &&
+      !/(?:send|share|bhej|pathav|forward|upload|save|keep|store)/i.test(message)) {
+    const mediaLabel = options.mediaType === 'document' ? 'document' : options.mediaType;
+    const reply = `Document milala${mediaLabel === 'document' ? '' : `, ${mediaLabel}`}.`;
+    memory.addMessage(chatId, 'assistant', reply);
+    return { reply, taskAction: null, fileRequest: null, socialIntent: socialIntent.intent, simpleBrain: 'media_received' };
+  }
   
   // Time query
   if (intent === 'time') {

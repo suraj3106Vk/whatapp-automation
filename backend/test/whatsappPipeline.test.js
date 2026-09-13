@@ -4,6 +4,8 @@ const test = require('node:test');
 const { extractMessageContent, unwrapMessageContent } = require('../src/whatsapp/messageExtractor');
 const { classifyReplyPolicy } = require('../src/agent/messagePolicy');
 const { createInboundGuard, isStaleIncomingMessage } = require('../src/whatsapp/inboundGuard');
+const { processMessage } = require('../src/agent/skAgent');
+const contactDirectory = require('../src/whatsapp/contactDirectory');
 
 test('extracts wrapped text and hydrated business template content', () => {
   const result = extractMessageContent({ message: { ephemeralMessage: { message: { templateMessage: { hydratedTemplate: {
@@ -58,4 +60,22 @@ test('guard suppresses duplicate, semantic replay, stale and flood events', () =
   assert.equal(guard.check({ chatId: 'a', messageId: '4', text: 'flood', timestamp: Date.now() }).reason, 'rate_limit');
   assert.equal(isStaleIncomingMessage({ messageTimestamp: Math.floor((Date.now() - 3600000) / 1000) }, Date.now()), true);
   assert.equal(unwrapMessageContent({ message: { viewOnceMessageV2: { message: { conversation: 'ok' } } } }).conversation, 'ok');
+});
+
+test('received documents do not trigger outbound file lookup', async () => {
+  const result = await processMessage('media-received-test', 'Contact', 'Notes.pdf', null, {
+    hasMedia: true,
+    mediaType: 'document',
+    fileName: 'Notes.pdf',
+  });
+  assert.equal(result.fileRequest, null);
+  assert.match(result.reply, /Document milala/);
+});
+
+test('contact lookup returns only an exact cached WhatsApp contact', () => {
+  contactDirectory.clear();
+  assert.equal(contactDirectory.find('Sanket'), null);
+  contactDirectory.remember('919876543210@s.whatsapp.net', 'Sanket Ingole');
+  assert.equal(contactDirectory.find('Sanket Ingole').number, '919876543210');
+  contactDirectory.clear();
 });

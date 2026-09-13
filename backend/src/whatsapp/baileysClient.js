@@ -250,7 +250,15 @@ async function processIncomingMessage(message) {
     const started = Date.now();
     let result;
     const fromNumber = chatId.split('@')[0]; // Extract phone number from chatId
-    try { result = await skAgent.processMessage(chatId, senderName, agentMessage, fromNumber, { isGroup }); }
+    try {
+      result = await skAgent.processMessage(chatId, senderName, agentMessage, fromNumber, {
+        isGroup,
+        hasMedia: extracted.hasMedia,
+        mediaType: type,
+        fileName: extracted.fileName,
+        caption: extracted.caption,
+      });
+    }
     catch (error) { logger.error({ err: error.message }, 'agent processing failed'); result = { reply: 'Sorry, I had an error processing your message. Please try again.' }; }
     let responseText = result.reply || null;
     if (result.taskAction) {
@@ -308,6 +316,7 @@ async function startSocket() {
     socket = activeSocket;
     activeSocket.ev.on('creds.update', saveCreds);
     activeSocket.ev.on('contacts.upsert', entries => contactDirectory.upsert(entries));
+    activeSocket.ev.on('contacts.update', entries => contactDirectory.upsert(entries));
     activeSocket.ev.on('messages.upsert', ({ messages, type }) => { if (type === 'notify' && generation === connectionGeneration) messages.forEach(item => handleIncoming(item).catch(error => logger.error({ err: error.message, stack: error.stack }, 'message handler failed'))); });
     activeSocket.ev.on('connection.update', async update => {
       if (generation !== connectionGeneration) return;
