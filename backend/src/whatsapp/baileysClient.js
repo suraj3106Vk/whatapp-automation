@@ -25,6 +25,7 @@ const { extractMessageContent, unwrapMessageContent } = require('./messageExtrac
 const { classifyReplyPolicy } = require('../agent/messagePolicy');
 const { createInboundGuard, isStaleIncomingMessage, timestampMs } = require('./inboundGuard');
 const memory = require('../memory/conversationMemory');
+const contactDirectory = require('./contactDirectory');
 
 const OWNER_NAME = process.env.OWNER_NAME || 'Suraj Zalke';
 const OWNER_SHORT_NAME = process.env.OWNER_SHORT_NAME || 'Suraj';
@@ -81,7 +82,7 @@ let connectionGeneration = 0;
 
 const settings = {
   autoReply: true,
-  replyToGroups: process.env.ENABLE_GROUPS === 'true',
+  replyToGroups: process.env.ENABLE_GROUPS !== 'false',
   blacklistedChats: new Set(),
   whitelistedOnly: false,
   whitelistedChats: new Set(),
@@ -183,7 +184,7 @@ async function handleFileRequest(chatId, request, senderName) {
 }
 function taskConfirmation(task) {
   const when = task.triggerAt ? new Date(task.triggerAt).toLocaleString('en-IN') : 'noted';
-  return task.isForOwner ? `Got it! I'll tell ${OWNER_SHORT_NAME} — "${task.description}" — ${when}.` : `Got it! "${task.description}" set for ${when}.`;
+  return task.isForOwner ? `Barobar, ${OWNER_SHORT_NAME} la inform karto — ${when}.` : `Barobar, reminder ${when} la set kela.`;
 }
 async function processIncomingMessage(message) {
   const id = message.key?.id;
@@ -231,6 +232,7 @@ async function processIncomingMessage(message) {
     }
     const senderName = message.pushName || chatId.split('@')[0];
     knownChats.set(chatId, { id: chatId, name: senderName, isGroup });
+    contactDirectory.remember(chatId, senderName);
     let agentMessage = body;
     if (type === 'image' || type === 'document') {
       try {
@@ -279,7 +281,15 @@ async function handleIncoming(message) {
   }, 1500);
   pendingTextMessages.set(chatId, pending);
 }
-async function sendTask(task) { if (state === 'ready') await sendText(task.chatId, `Reminder: ${task.message || task.description || 'Reminder!'}`); }
+async function sendTask(task) {
+  if (state !== 'ready') return;
+  const message = String(task.message || task.description || '').trim();
+  if (!message) {
+    logger.warn({ taskId: task.id }, 'skipping scheduled task with empty message');
+    return;
+  }
+  await sendText(task.chatId, message);
+}
 async function startSocket() {
   if (starting || state === 'ready' || state === 'connecting' || reconnectTimer) return;
   starting = true;
@@ -297,6 +307,7 @@ async function startSocket() {
     const activeSocket = makeWASocket({ version, auth: { creds: authState.creds, keys: makeCacheableSignalKeyStore(authState.keys, logger) }, browser: Browsers.ubuntu('SK Agent'), logger, printQRInTerminal: false, markOnlineOnConnect: false, syncFullHistory: false, generateHighQualityLinkPreview: false });
     socket = activeSocket;
     activeSocket.ev.on('creds.update', saveCreds);
+    activeSocket.ev.on('contacts.upsert', entries => contactDirectory.upsert(entries));
     activeSocket.ev.on('messages.upsert', ({ messages, type }) => { if (type === 'notify' && generation === connectionGeneration) messages.forEach(item => handleIncoming(item).catch(error => logger.error({ err: error.message, stack: error.stack }, 'message handler failed'))); });
     activeSocket.ev.on('connection.update', async update => {
       if (generation !== connectionGeneration) return;

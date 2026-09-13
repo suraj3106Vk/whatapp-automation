@@ -285,11 +285,13 @@ async function getOllamaModel() {
   }
 }
 
-async function callOllama(messages) {
+async function callOllama(messages, options = {}) {
   const model = await getOllamaModel();
   if (!model) throw new Error('No Ollama model available');
 
   const trimmed = trimMessages(messages);
+  const temperature = options.temperature ?? 0.6;
+  const num_predict = options.maxTokens ?? 600;
 
   let response;
   try {
@@ -300,7 +302,7 @@ async function callOllama(messages) {
         model,
         messages: trimmed,
         stream: false,
-        options: { temperature: 0.6, num_predict: 600, top_p: 0.9 },
+        options: { temperature, num_predict, top_p: 0.9 },
       },
       { timeout: 120000 }
     );
@@ -314,7 +316,7 @@ async function callOllama(messages) {
       '\n\nASSISTANT:';
     response = await axios.post(
       `${OLLAMA_URL}/api/generate`,
-      { model, prompt, stream: false, options: { temperature: 0.6, num_predict: 600 } },
+      { model, prompt, stream: false, options: { temperature, num_predict } },
       { timeout: 120000 }
     );
     if (response.data?.response) return response.data.response.trim();
@@ -396,10 +398,12 @@ async function detectGroqModel(apiKey) {
   return GROQ_MODELS[0];
 }
 
-async function callGroq(messages) {
+async function callGroq(messages, options = {}) {
   const trimmed = trimMessages(messages);
   const healthyKeys = GROQ_KEYS.filter(key => keyIsHealthy(groqHealth, key));
   if (healthyKeys.length === 0) throw new Error('Groq keys cooling down');
+  const temperature = options.temperature ?? 0.7;
+  const max_tokens = options.maxTokens ?? 500;
 
   for (let i = 0; i < healthyKeys.length; i++) {
     const apiKey = healthyKeys[(groqKeyIdx++) % healthyKeys.length];
@@ -407,7 +411,7 @@ async function callGroq(messages) {
     try {
       const resp = await axios.post(
         'https://api.groq.com/openai/v1/chat/completions',
-        { model, messages: trimmed, max_tokens: 500, temperature: 0.7 },
+        { model, messages: trimmed, max_tokens, temperature },
         {
           headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
           timeout: GROQ_TIMEOUT_MS,
@@ -431,13 +435,15 @@ async function callGroq(messages) {
 
 // ── Gemini ─────────────────────────────────────────────────────────────────────
 
-async function callGemini(messages) {
+async function callGemini(messages, options = {}) {
   if (GEMINI_KEYS.length === 0) throw new Error('Gemini disabled — no valid keys configured');
   const trimmed = trimMessages(messages);
   const systemText = trimmed.find(m => m.role === 'system')?.content || 'You are a helpful assistant.';
   const contents = trimmed
     .filter(m => m.role !== 'system')
     .map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
+  const temperature = options.temperature ?? 0.7;
+  const maxOutputTokens = options.maxTokens ?? 500;
 
   const healthyKeys = GEMINI_KEYS.filter(key => keyIsHealthy(geminiHealth, key));
   if (healthyKeys.length === 0) throw new Error('Gemini keys cooling down');
@@ -450,7 +456,7 @@ async function callGemini(messages) {
         const body = {
           contents,
           system_instruction: { parts: [{ text: systemText }] },
-          generationConfig: { maxOutputTokens: 500, temperature: 0.7 },
+          generationConfig: { maxOutputTokens, temperature },
         };
         const extraTimeout = authType === 'x-goog-header' ? 15000 : 0;
         const resp = await geminiRequest(apiKey, model, body, extraTimeout);
@@ -485,13 +491,15 @@ async function callGemini(messages) {
 
 // ── Main chat() ────────────────────────────────────────────────────────────────
 
-async function chat(messages) {
+async function chat(messages, options = {}) {
   maybeReportStats();
   let raw = null;
+  const temperature = typeof options.temperature === 'number' ? options.temperature : undefined;
+  const maxTokens = typeof options.maxTokens === 'number' ? options.maxTokens : undefined;
 
   // 1. Try Groq (FAST cloud API — PRIMARY)
   try {
-    raw = await callGroq(messages);
+    raw = await callGroq(messages, { temperature, maxTokens });
     console.log('[LLM] Response from Groq');
   } catch (e) {
     console.warn('[LLM] Groq (primary) failed:', e.message);
@@ -500,7 +508,7 @@ async function chat(messages) {
   // 2. Try Gemini (cloud API — SECONDARY)
   if (!raw) {
     try {
-      raw = await callGemini(messages);
+      raw = await callGemini(messages, { temperature, maxTokens });
       console.log('[LLM] Response from Gemini');
     } catch (e) {
       console.warn('[LLM] Gemini (secondary) failed:', e.message);
@@ -512,7 +520,7 @@ async function chat(messages) {
     try {
       const ollamaOk = await isOllamaRunning();
       if (ollamaOk) {
-        raw = await callOllama(messages);
+        raw = await callOllama(messages, { temperature, maxTokens });
         console.log('[LLM] Response from Ollama (local fallback)');
       } else {
         console.warn('[LLM] Ollama not running — skipping local fallback');

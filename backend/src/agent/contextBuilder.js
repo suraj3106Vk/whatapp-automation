@@ -1,8 +1,9 @@
 const { normalizeForReasoning } = require('./messageNormalizer');
+const { getOwnerConfig } = require('./personaEngine');
 
 function roleLabel(item) {
-  if (item.role === 'assistant') return 'YOU (Suraj)';
-  if (item.role === 'owner') return 'YOU (Suraj)';
+  const ownerShort = getOwnerConfig().shortName || 'You';
+  if (item.role === 'assistant' || item.role === 'owner') return `YOU (${ownerShort})`;
   return item.senderName || 'Friend';
 }
 
@@ -39,43 +40,20 @@ function buildConversationContext(history, state, currentMessage, currentNormali
     state.lastContactAnswer && `💬 Their Last Answer: ${state.lastContactAnswer}`,
   ].filter(Boolean);
   
-  return `╔══════════════════════════════════════════════════════════════════╗
-║              INTELLIGENT CONTEXT & MEMORY SYSTEM               ║
-╚══════════════════════════════════════════════════════════════════╝
+  // Kept deliberately plain (no ASCII boxes / heavy headers) — a prompt that
+  // reads like a report tends to make the model reply like one too. This is
+  // just quick situational awareness for the model, not something to echo.
+  return `Read this like a quick mental note before replying, don't repeat it back:
+- what they seem to mean right now: ${intent}
+- mood: ${flow.mood}, urgency: ${flow.urgency}
+${memoryItems.length ? memoryItems.join('\n') : '- fresh conversation, no prior context'}
 
-📊 CONVERSATION INTELLIGENCE:
-─────────────────────────────────────────────────────────────────
-Intent Detected: ${intent}
-Conversation Mood: ${flow.mood}
-Urgency Level: ${flow.urgency}
-Response Type Needed: ${suggestResponseType(intent, flow)}
-
-📝 CONVERSATION MEMORY & STATE:
-─────────────────────────────────────────────────────────────────
-${memoryItems.length ? memoryItems.join('\n') : '✨ Fresh conversation starting'}
-
-💬 RECENT CONVERSATION (Last ${lines.length} messages):
-─────────────────────────────────────────────────────────────────
+Recent messages (oldest to newest, last line is what you're replying to):
 ${lines.join('\n')}
 
-🎯 CURRENT MESSAGE ANALYSIS:
-─────────────────────────────────────────────────────────────────
-Raw Message: ${currentMessage}
-Normalized: ${currentNormalized || normalizeForReasoning(currentMessage)}
+Current message as typed: "${currentMessage}"${currentNormalized && currentNormalized !== currentMessage ? ` (cleaned up: "${currentNormalized}")` : ''}
 
-╔══════════════════════════════════════════════════════════════════╗
-║                     HOW TO RESPOND SMARTLY                       ║
-╚══════════════════════════════════════════════════════════════════╝
-
-✓ CONNECT to previous conversation context above
-✓ REMEMBER what was discussed (check Topics/Memory section)
-✓ UNDERSTAND the relationship from chat history
-✓ RESPOND naturally based on the FULL PICTURE, not just current message
-✓ If follow-up question → REFERENCE what was said before
-✓ If task/schedule/reminder → CREATE <SK_TASK> with proper details
-✓ MATCH the mood (${flow.mood}) and energy level
-✓ Use ${intent} as guide for response type
-✓ Be CONTEXTUAL - connect dots between messages`;
+Reply to the actual point of the last message, matching the mood above. Reference earlier context only if it's actually relevant — don't force it in.`;
 }
 
 //══════════════════════════════════════════════════════════════════════════════

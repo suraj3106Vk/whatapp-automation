@@ -8,11 +8,12 @@
  * - Auto-reply state
  */
 
-const { classifySocialIntent, shouldReply: shouldReplyBySocialIntent } = require('./socialIntent');
+const { classifySocialIntent } = require('./socialIntent');
 
 // Auto-reply state
 let autoReplyEnabled = true;
 let pausedUntil = null;
+const stoppedChats = new Set();
 
 /**
  * Set auto-reply state
@@ -143,6 +144,19 @@ function shouldReply(message, context = {}) {
     contactProfile = {},
     isGroup = false,
   } = context;
+
+  const normalizedMessage = String(message || '').trim().toLowerCase();
+  const isStop = /^(stop|\/stop|sk stop|reply nako|ai nako|assistant off)$/i.test(normalizedMessage);
+  const isStart = /^(start|\/start|sk start|ai on|ai start|continue)$/i.test(normalizedMessage);
+
+  if (isStop && !isOwnerControlMessage(fromNumber, ownerNumber)) {
+    stoppedChats.add(chatId);
+    return { shouldReply: false, reason: 'CHAT_STOPPED' };
+  }
+  if (isStart) stoppedChats.delete(chatId);
+  if (stoppedChats.has(chatId)) {
+    return { shouldReply: false, reason: 'CHAT_STOPPED' };
+  }
   
   // Check if from owner (control messages)
   if (isOwnerControlMessage(fromNumber, ownerNumber)) {
@@ -206,16 +220,6 @@ function shouldReply(message, context = {}) {
     previousSenderRole: previousMessage?.role,
     messageCount: previousMessages.length,
   });
-  
-  // Check if social intent suggests reply
-  if (!shouldReplyBySocialIntent(socialIntent)) {
-    return {
-      shouldReply: false,
-      reason: 'SOCIAL_NO_REPLY_NEEDED',
-      socialIntent: socialIntent.intent,
-      replyMode: socialIntent.replyMode,
-    };
-  }
   
   // Check question frequency (anti-question spam)
   const recentMessages = previousMessages.slice(-5);

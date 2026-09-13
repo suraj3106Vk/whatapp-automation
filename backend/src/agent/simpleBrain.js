@@ -1,14 +1,32 @@
 /**
  * Simple Brain — Deterministic Pattern-Based Reply Engine
  * NO LLM, NO HALLUCINATIONS. Just pattern matching + templates.
- * 
- * Prioritizes:
- * 1. Relationship detection (Aai = Mother)
- * 2. Message patterns (regex)
- * 3. Conversation state (last assistant message) for "manje" clarifications
+ *
+ * IMPORTANT — two modes, controlled by SIMPLE_BRAIN_MODE env var:
+ *
+ *  'minimal' (default) — only handles messages that genuinely need NO
+ *  content-bearing reply at all: short acks ("ok", "hmm"), filler, goodbyes,
+ *  and emoji-only messages. Everything with actual meaning (greetings,
+ *  "who are you", "how are you", introductions, "where is X") is left for
+ *  the LLM, which now has a proper personality prompt and real conversation
+ *  context — so it can reply in a way that's actually specific to what was
+ *  said, instead of always returning the same fixed line from a small array.
+ *  This is the recommended mode: it's what makes replies feel like a real
+ *  person instead of a scripted bot.
+ *
+ *  'full' — restores the original behaviour: canned Marathi/Hindi templated
+ *  replies (bucketed by guessed relationship — mother/father/brother/etc.)
+ *  fire before the LLM ever runs, for greetings, identity questions, "how
+ *  are you", introductions, and "where is X". Useful only if you
+ *  specifically want fixed scripted replies for these cases and don't mind
+ *  every stranger getting the same handful of lines.
  */
 
 const { getOwnerConfig } = require('./personaEngine');
+const contactDirectory = require('../whatsapp/contactDirectory');
+
+const SIMPLE_BRAIN_MODE = (process.env.SIMPLE_BRAIN_MODE || 'full').toLowerCase();
+const FULL_MODE = SIMPLE_BRAIN_MODE === 'full';
 
 // ── Relationship detection ────────────────────────────────────────────────────
 function detectRelationship(contactName) {
@@ -22,17 +40,37 @@ function detectRelationship(contactName) {
   return 'UNKNOWN';
 }
 
+function relationshipFromMessage(message, fallback) {
+  const text = String(message || '').toLowerCase();
+  if (/(?:me|mi|main|i\s+am|tuzi|your)\s+[^.?!]{0,30}\b(sister|tai|bahin|didi|ताई|बहीण|दीदी)\b|\b(tai|sister|bahin|didi)\s+manun\s+bol/.test(text)) return 'SISTER';
+  if (/(?:me|mi|main|i\s+am|tuza|your)\s+[^.?!]{0,30}\b(aai|mother|mom|mummy|आई|mata)\b/.test(text)) return 'MOTHER';
+  if (/(?:me|mi|main|i\s+am|tuza|your)\s+[^.?!]{0,30}\b(baba|dad|father|papa|बाबा|pita)\b/.test(text)) return 'FATHER';
+  if (/(?:me|mi|main|i\s+am|tuza|your)\s+[^.?!]{0,30}\b(brother|bhau|bro|भाऊ)\b/.test(text)) return 'BROTHER';
+  if (/(?:me|mi|main|i\s+am|tuza|your)\s+[^.?!]{0,30}\b(kaka|mama|aajoba|ajji|uncle|aunty|mavshi|atya)\b/.test(text)) return 'ELDER';
+  return fallback;
+}
+
+function relationshipFromHistory(history, fallback) {
+  for (const entry of [...history].reverse()) {
+    if (entry.role === 'contact') {
+      const relationship = relationshipFromMessage(entry.content, null);
+      if (relationship) return relationship;
+    }
+  }
+  return fallback;
+}
+
 // ── Owner name helpers ────────────────────────────────────────────────────────
 function ownerShort() { return getOwnerConfig().shortName || 'Suraj'; }
 function ownerFull()  { return getOwnerConfig().name || 'Suraj Zalke'; }
 
 // ── Busy status for Suraj (variations for naturalness) ───────────────────────
 const BUSY_STATUSES = [
-  'work madhe busy ahe',
-  'meeting madhe ahe atmadhye',
-  'kaam madhe ahe',
-  'office madhe busy ahe',
-  'work la ahe bhet nahi yet',
+  'college madhe busy ahe',
+  'college madhe ahe atmadhye',
+  'college cha kaam chaluy',
+  'college madhe kaam ahe',
+  'college la ahe, bhet nahi yet',
 ];
 function randomBusyStatus() {
   return BUSY_STATUSES[Math.floor(Math.random() * BUSY_STATUSES.length)];
@@ -56,28 +94,76 @@ function tryReply({
 }) {
   const text = String(message || '').trim();
   const t = text.toLowerCase();
-  const rel = detectRelationship(senderName);
+  const displayRelationship = detectRelationship(senderName);
   const OSN = ownerShort();
+
+  if (/^(start|\/start|sk\s+start|ai\s+(on|start)|continue)$/i.test(t)) {
+    return { reply: 'Okay, bol na.', usedSimpleBrain: true, source: 'start_chat' };
+  }
+
+  if (/^(?:ok\s+)?(?:oyeii?\s+)?sk[\s!.]*$/i.test(t) || /^sk[\s!.]*$/i.test(t)) {
+    return { reply: 'Ho, bol na.', usedSimpleBrain: true, source: 'sk_greeting' };
+  }
 
   // ──────────────────────────────────────────────────────────────────────
   // STEP 1: SHORT-ACK / NO-REPLY messages (fast path)
   // ──────────────────────────────────────────────────────────────────────
   if (/^(br+|ok+|ha+|ho+|hmm+|hm|k|barobar|thik|theek|acha|accha|alright|done|👌|👍|✅)[\s!.]*$/i.test(t)) {
-    return { reply: null, noReply: true, usedSimpleBrain: true, source: 'short_ack' };
+    return { reply: pick(['Okay', 'Ho', 'Barobar']), usedSimpleBrain: true, source: 'short_ack' };
   }
   if (/^(hmm|hm|uh|uhh|um|umm|ahem)[\s.]*$/i.test(t)) {
-    return { reply: null, noReply: true, usedSimpleBrain: true, source: 'filler' };
+    return { reply: 'Ho, bol na.', usedSimpleBrain: true, source: 'filler' };
   }
   if (/^(bye|tata|chalo|ok\s+bye|good\s*night|night)[\s!.]*$/i.test(t)) {
-    return { reply: null, noReply: true, usedSimpleBrain: true, source: 'bye' };
+    return { reply: pick(['Bye', 'Byee', 'Chal, bye']), usedSimpleBrain: true, source: 'bye' };
   }
-  if (/^[\p{Emoji}\s]+$/u.test(t)) {
+  if (/^[\p{Emoji}\s]+$/u.test(t) && /[^\d\s]/u.test(t)) {
     // Single emoji → usually no reply
-    if (t.length < 6) return { reply: null, noReply: true, usedSimpleBrain: true, source: 'emoji_only' };
+    if (t.length < 6) return { reply: '🙂', usedSimpleBrain: true, source: 'emoji_only' };
     // Playful emojis → small emoji back
     if (/[😂🤣😜😝🙄]/.test(t)) return { reply: '😂', usedSimpleBrain: true, source: 'emoji_playful' };
     if (/[😢😭💔]/.test(t)) return { reply: 'Kay jhala re?', usedSimpleBrain: true, source: 'emoji_sad' };
-    return { reply: null, noReply: true, usedSimpleBrain: true, source: 'emoji_other' };
+    return { reply: '🙂', usedSimpleBrain: true, source: 'emoji_other' };
+  }
+
+  const previousContactQuestion = [...history].reverse().find(entry => entry.role === 'owner' && /[?]|\b(what|when|where|how|kadhi|konte|kasa|kay)\b/i.test(entry.content));
+  const rel = relationshipFromMessage(message, relationshipFromHistory(history, displayRelationship));
+  if (/^\d{1,4}[\s!.]*$/.test(t) && previousContactQuestion) {
+    return { reply: text.trim(), usedSimpleBrain: true, source: 'answer_previous_question' };
+  }
+
+  if (/\b(chukich|chukicha|wrong|galat)\b/i.test(t)) {
+    return { reply: 'Ho, chukicha hota.', usedSimpleBrain: true, source: 'correction' };
+  }
+
+  if (/(?:suraj|to|tyacha|tyachi)\s+(?:kay|kai|kaya)\s+kart|what\s+is\s+suraj\s+doing/i.test(t)) {
+    return { reply: `${OSN} college cha kaam karat ahe.`, usedSimpleBrain: true, source: 'owner_activity' };
+  }
+
+  if (/(?:meeting|metting|meet)\s+(?:ka|kashala|why)|ka\s+(?:meeting|metting|meet)|meeting\s+(?:ahe|aahe|chalu)/i.test(t)) {
+    return { reply: `${OSN} college cha kaam ahe mhanun meeting madhe ahe.`, usedSimpleBrain: true, source: 'meeting_context' };
+  }
+
+  const numberMatch = t.match(/\bmala\s+ek\s+kam\s+ahe\s+mala\s+([a-z][a-z0-9 .'-]*?)\s+(?:cha|chi|che|chya)\s+(?:no|number|mobile|phone|contact)\b/i) ||
+    t.match(/\bmala\s+(?:(?:ek\s+kam\s+kar|ek\s+kam\s+|please)\s+)?([a-z][a-z0-9 .'-]*?)\s+(?:cha|chi|che|chya)\s+(?:no|number|mobile|phone|contact)\b/i) ||
+    t.match(/\b([a-z][a-z0-9 .'-]*?)\s+(?:cha|chi|che|chya)\s+(?:no|number|mobile|phone|contact)\s+(?:pathav|bhej|send|de|pahije)\b/i);
+  if (numberMatch || /(?:no|number|mobile|phone|contact)\s+(?:pathav|bhej|send|de|pahije)/i.test(t)) {
+    const requestedName = numberMatch
+      ? numberMatch[1].trim().replace(/^(?:(?:ok|are|oyeii?|brr|mala|please|ek\s+kam\s+kar)\s+)+/i, '').trim()
+      : rel;
+    const contact = contactDirectory.find(requestedName) || contactDirectory.find(rel);
+    if (contact) {
+      return { reply: `${contact.name} cha number ${contact.number}`, usedSimpleBrain: true, source: 'contact_number' };
+    }
+    return { reply: `Mazyakade ${requestedName || 'tyancha'} contact number saved nahi ahe.`, usedSimpleBrain: true, source: 'contact_number_missing' };
+  }
+
+  // Everything below this point is scripted/templated persona behaviour
+  // (greetings, identity, "how are you", introductions, "where is X"...).
+  // Only run it in 'full' mode — otherwise fall through to the LLM, which
+  // will handle these more naturally using the real conversation context.
+  if (!FULL_MODE) {
+    return { reply: null, usedSimpleBrain: false, source: 'nomatch_minimal_mode' };
   }
 
   // ──────────────────────────────────────────────────────────────────────
@@ -104,7 +190,7 @@ function tryReply({
   // STEP 3: Identity question "Tu kon", "Kon tu", "Who r u", etc.
   // ──────────────────────────────────────────────────────────────────────
   if (/\b(tu\s+kon|kon\s+tu|kaun\s+hai\s+tu|kaun\s+tu|who\s+(r|are)\s+you|kon\s+ah(at|es|e)s?)\b/i.test(t)) {
-    const base = `Mi ${OSN} boltoy`;
+    const base = `Mi ${OSN} cha AI assistant boltoy`;
     if (rel === 'MOTHER')  return { reply: `${base} aai.`, usedSimpleBrain: true, source: 'identity_mother' };
     if (rel === 'FATHER')  return { reply: `${base} baba.`, usedSimpleBrain: true, source: 'identity_father' };
     if (rel === 'BROTHER') return { reply: `${base} re bhau.`, usedSimpleBrain: true, source: 'identity_brother' };
@@ -118,7 +204,7 @@ function tryReply({
   // ──────────────────────────────────────────────────────────────────────
   if (/\b(ai|bot|chatbot|robot|auto.?reply)\b.*\?|\?.*\b(ai|bot|chatbot|robot)\b/i.test(t) ||
       /\b(tu\s+ai\s+(ahes|aahes|ah(e|at))|ai\s+ka)\b/i.test(t)) {
-    return { reply: 'Ho, auto-reply chalu ahe 😂', usedSimpleBrain: true, source: 'ai_disclosure' };
+    return { reply: `Ho, mi ${OSN} cha AI assistant ahe 😂`, usedSimpleBrain: true, source: 'ai_disclosure' };
   }
 
   // ──────────────────────────────────────────────────────────────────────
@@ -158,7 +244,7 @@ function tryReply({
   // STEP 7: GREETINGS ("Hi", "Hello", "Namaskar", "Oyeii", etc.)
   // ──────────────────────────────────────────────────────────────────────
   // Repeated same-ping detection (Oyeii × N) — look at recent 3 contact messages
-  const recentContact = history.filter(h => h.role !== 'assistant').slice(-3).map(h => String(h.content).toLowerCase().trim());
+  const recentContact = history.filter(h => h.role !== 'assistant').slice(0, -1).slice(-3).map(h => String(h.content).toLowerCase().trim());
   const lastMsgs = [...recentContact, t];
   const uniqueMsgs = [...new Set(lastMsgs.filter(m => m.length > 0))];
   const isRepeatedPing = uniqueMsgs.length === 1 && lastMsgs.length >= 2;

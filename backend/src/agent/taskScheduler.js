@@ -123,9 +123,9 @@ function tick() {
 
 function start() {
   if (tickInterval) return;
-  tickInterval = setInterval(tick, 30000); // check every 30s
+  tickInterval = setInterval(tick, 1000);
   tick(); // immediate first check
-  console.log('[Scheduler] Started — checking tasks every 30s');
+  console.log('[Scheduler] Started — checking tasks every second');
 }
 
 function stop() {
@@ -214,7 +214,7 @@ function parseTimeExpression(text, refTime = Date.now()) {
 
 function parseClockTime(text, refDate) {
   // 12h: "3pm", "3:30pm", "3:30 pm"
-  const match12 = text.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)/);
+  const match12 = text.match(/(\d{1,2})(?:(?::|\.)(\d{2}))?\s*(am|pm)/);
   if (match12) {
     let h = parseInt(match12[1]);
     const m = parseInt(match12[2] || '0');
@@ -226,10 +226,13 @@ function parseClockTime(text, refDate) {
     return d.getTime();
   }
   // 24h: "15:30", "09:00"
-  const match24 = text.match(/\b(\d{1,2}):(\d{2})\b/);
+  const match24 = text.match(/\b(\d{1,2})[:.](\d{1,2})\b/);
   if (match24) {
+    let hour = parseInt(match24[1]);
+    const minute = parseInt(match24[2]);
+    if (hour >= 1 && hour <= 11 && new Date(refDate).getHours() >= 12) hour += 12;
     const d = new Date(refDate);
-    d.setHours(parseInt(match24[1]), parseInt(match24[2]), 0, 0);
+    d.setHours(hour, minute, 0, 0);
     return d.getTime();
   }
   return null;

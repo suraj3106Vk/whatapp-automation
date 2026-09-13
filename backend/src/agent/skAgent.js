@@ -13,7 +13,6 @@
  */
 
 const { generateResponse } = require('./llmRouter');
-const consentGate = require('./consentGate');
 const memory = require('../memory/conversationMemory');
 const scheduler = require('./taskScheduler');
 const { normalizeForReasoning } = require('./messageNormalizer');
@@ -21,7 +20,7 @@ const { buildConversationContext } = require('./contextBuilder');
 const conversationState = require('./conversationState');
 const { tryReply } = require('./simpleBrain');
 
-const { setOwnerConfig, getOwnerConfig } = require('./personaEngine');
+const { setOwnerConfig, getOwnerConfig, getPersonaDescription, ownerNameRegex } = require('./personaEngine');
 const { classifySocialIntent } = require('./socialIntent');
 const styleProfile = require('./styleProfile');
 const dialectMemory = require('./dialectMemory');
@@ -29,7 +28,47 @@ const replyPolicy = require('./replyPolicy');
 const responseFilter = require('./responseFilter');
 const { classifyReplyPolicy } = require('./messagePolicy');
 
-const SK_RUNTIME_PROMPT = "You are SK, Mr. Suraj's WhatsApp AI assistant. Read the recent conversation and understand what the latest message actually means before replying. Reply naturally and directly in the sender's language/style. Keep casual replies very short. Do not explain words unless explicitly asked for their meaning. Do not repeat the sender's message. Do not behave like customer support. Do not ask unnecessary questions. Do not keep the conversation alive artificially. If no reply is naturally required, return <SK_NO_REPLY>. If directly asked whether you are Suraj, say you are Mr. Suraj's AI assistant. If asked where Suraj is, say Suraj is busy. Return only the final reply.";
+/**
+ * Builds the system prompt fresh on every call using the CURRENT owner config
+ * and persona description, so it always talks like the actual configured
+ * person — not a hardcoded name. This is the single biggest lever on "sounds
+ * like a real person vs sounds like a chatbot": give the model an actual
+ * voice, actual rules against chatbot-speak, and worked examples instead of
+ * one generic sentence.
+ */
+function buildSystemPrompt() {
+  const owner = getOwnerConfig();
+  const persona = getPersonaDescription();
+
+  return `You are texting FROM ${owner.shortName}'s phone, replying on their behalf while they're away — not a support bot, not an assistant announcing itself. You ARE the voice in this chat.
+
+WHO YOU SOUND LIKE:
+${persona}
+
+IDENTITY: You are ${owner.shortName}'s AI assistant/agent. Never claim to be ${owner.shortName}, never write "I am ${owner.shortName}", and never present yourself as the owner. If asked who you are, answer that you are ${owner.shortName}'s AI assistant.
+
+THE ONE RULE THAT MATTERS MOST: before writing anything, actually read the last message and figure out what it means in context — a question, a joke, a complaint, small talk, a request. Your reply must directly relate to THAT, in your own words. Never write a generic reply that could apply to any message.
+
+HOW TO REPLY:
+- Write like a real WhatsApp text: short, plain, no essay. Most replies are one line.
+- Match the sender's language and register — if they write in Hindi/Marathi/Hinglish/English, reply in kind. Don't switch them to formal English.
+- React like a person: agree, disagree, tease back, ask a real follow-up only if you're actually curious — not to "keep engagement going".
+- Never explain a word's meaning unless they explicitly ask what it means.
+- Never repeat or paraphrase their message back at them.
+- Never use customer-support phrasing: no "how can I help", "let me know if you need anything", "feel free to", "please provide", "I'm here for you", no exclamation-mark enthusiasm, no bullet lists in casual chat.
+- Don't ask a question just to fill space. If nothing needs asking, don't ask.
+  - Always keep the conversation moving with a brief, relevant reply. Acknowledge short messages and goodbyes naturally; never return a no-reply marker for ordinary conversation.
+- If directly asked whether you're ${owner.shortName}, say you're ${owner.shortName}'s AI assistant, not ${owner.shortName} themself.
+- If asked where ${owner.shortName} is, say they're busy right now, not exact details.
+- Return ONLY the final reply text. No labels, no explanation of your reasoning, no quotes around it.
+
+EXAMPLES (for calibration only, don't reuse the wording):
+Them: "yaar kal wo plan cancel ho gaya"  →  You: "arre kyu, sab thik hai na"
+Them: "lol you're so dead 💀"  →  You: "haha bring it on"
+Them: "what time works for you tomorrow"  →  You: "afternoon works better for me, 3ish?"
+  Them: "ok"  →  You: "Okay"
+Them: "are you a bot"  →  You: "Ho, auto-reply chalu ahe 😂" (or the equivalent in whatever language they're using)`;
+}
 
 // ── Fast-path patterns ──────────────────────────────────────────────────────────
 
@@ -64,12 +103,18 @@ const CANCEL_KEYWORDS = [
   /(reminder|task)\s+cancel/i, /band\s+karo/i,
 ];
 
-const INFORM_OWNER_PATTERNS = [
-  /(tell|inform|msg|message|batao|bhejo|bta|yaad\s+dila(na|o)?|remind)\s+(\w+\s+)?(suraj|owner|boss|sir|him|unhe|unko)/i,
-  /suraj\s+(ko|ko\s+to|se|ke\s+liye)/i,
-  /(need|want|going|have|supposed)\s+to\s+(meet|see|call|talk\s+to|contact)\s+suraj/i,
-  /meet\s+suraj/i, /suraj\s+(to\s+)?meet/i,
-];
+// Built lazily (not at module-load time) so it always reflects the CURRENT
+// owner name/short-name from personaEngine, instead of a hardcoded person.
+function buildInformOwnerPatterns() {
+  const name = ownerNameRegex().source.replace(/^\\b\(|\)\\b$/g, ''); // strip outer \b(...)\b
+  return [
+    new RegExp(`(tell|inform|msg|message|batao|bhejo|bta|yaad\\s+dila(na|o)?|remind)\\s+(\\w+\\s+)?(${name}|owner|boss|sir|him|unhe|unko)`, 'i'),
+    new RegExp(`\\b(${name})\\s+(ko|ko\\s+to|se|ke\\s+liye)`, 'i'),
+    new RegExp(`(need|want|going|have|supposed)\\s+to\\s+(meet|see|call|talk\\s+to|contact)\\s+(${name})`, 'i'),
+    new RegExp(`meet\\s+(${name})`, 'i'),
+    new RegExp(`(${name})\\s+(to\\s+)?meet`, 'i'),
+  ];
+}
 
 const SELF_REMIND_PATTERNS = [
   /remind\s+me/i, /mujhe\s+yaad/i, /mere\s+liye\s+reminder/i, /yaad\s+dila(na)?\s+mujhe/i,
@@ -90,12 +135,66 @@ function detectIntent(text) {
 function textMentionsOwner(text) {
   if (!text) return false;
   const t = text.toLowerCase();
-  return INFORM_OWNER_PATTERNS.some(p => p.test(t)) || /suraj|zalke|boss/.test(t);
+  return buildInformOwnerPatterns().some(p => p.test(t)) || ownerNameRegex().test(t);
 }
 
 function textSaysSelfRemind(text) {
   if (!text) return false;
   return SELF_REMIND_PATTERNS.some(p => p.test(text));
+}
+
+function buildLocalTaskAction(text) {
+  if (!/(?:remind|alarm|schedule|send|message|msg|bhej|pathav|yaad\s+dila)/i.test(text)) return null;
+  const parsed = scheduler.parseTimeExpression(text);
+  if (!parsed?.triggerAt) return null;
+
+  const shortMessage = text.match(/\b(?:msg|message)\s+(?:kar\w*\s+)?\d{1,2}(?:[:.]\d{1,2})?\s*(?:la|at)\s+(.+?)(?:\s+manun\b|\s*$)/i) ||
+    text.match(/\b\d{1,2}(?:[:.]\d{1,2})?\s*(?:la|at)?\s+(?:msg|message)\s+(?:kar\w*\s+)?(.+?)(?:\s+manun\b|\s*$)/i);
+  if (shortMessage) {
+    const message = shortMessage[1].trim();
+    return {
+      type: parsed.isRecurring ? 'recurring' : 'scheduled_message',
+      description: message,
+      message,
+      timeExpression: text,
+      interval: parsed.interval || null,
+    };
+  }
+
+  if (/\binform\b/i.test(text) && /\b(?:meeting|metting|meet)\b/i.test(text)) {
+    return {
+      type: parsed.isRecurring ? 'recurring' : 'scheduled_message',
+      description: 'Suraj la college chi info sang',
+      message: 'Suraj la college chi info sang',
+      timeExpression: text,
+      interval: parsed.interval || null,
+    };
+  }
+
+  const messageMatch = text.match(/\b(?:at|la)\s+(.+?)\s+(?:msg|message)\s+(?:kar|karo|de|pathav|bhej)?\s*$/i);
+  let message = messageMatch?.[1]?.trim() || text.trim();
+  message = message.replace(/\s+\d{1,2}(?:[:.]\d{1,2})?\s*(?:la|at)?\s*$/i, '');
+  message = message.replace(/\b(?:ani\s+)?mala\s+(?:msg|message)\s+pan\b.*$/i, '');
+  if (/\binform\b/i.test(message)) {
+    message = /\bmeeting\b/i.test(message)
+      ? 'Suraj la college chi info sang'
+      : message.replace(/\b(?:inform|karsil|karsik|karshil)\b/gi, 'inform kar');
+  }
+  message = message
+    .replace(/\b(?:mala|please|ek\s+kam\s+kar|remind\s+me|reminder|set\s+(?:an\s+)?alarm|schedule)\b/gi, '')
+    .replace(/\b(?:at|la)\s+\d{1,2}(?:[:.]\d{1,2})?\b/gi, '')
+    .replace(/\b(?:send|msg|message|bhej|pathav|kar|karo|de)\b/gi, '')
+    .replace(/\b(?:ani|and)\s+(?:mala\s+)?(?:msg|message)\s+pan\b.*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!message) message = 'reminder';
+  return {
+    type: parsed.isRecurring ? 'recurring' : 'scheduled_message',
+    description: message,
+    message,
+    timeExpression: text,
+    interval: parsed.interval || null,
+  };
 }
 
 function buildFileRequest(text) {
@@ -202,49 +301,8 @@ async function processMessage(chatId, senderName, message, fromNumber = null, op
     };
   }
 
-  if (options.isGroup) {
-    return { reply: null, noReply: true, reason: 'GROUP_CONSENT_DISABLED' };
-  }
-
-  let consent = consentGate.get(chatId);
-  if (consentGate.isRevokeCommand(message) && consent.state === consentGate.CONSENT_STATES.ALLOWED) {
-    consent = consentGate.set(chatId, consentGate.CONSENT_STATES.DENIED);
-    memory.addMessage(chatId, 'assistant', 'Okay');
-    return { reply: 'Okay', noReply: false, consentState: consent.state };
-  }
-
-  if (consent.state === consentGate.CONSENT_STATES.DENIED) {
-    if (consentGate.isEnableCommand(message)) {
-      consent = consentGate.set(chatId, consentGate.CONSENT_STATES.ALLOWED);
-      memory.addMessage(chatId, 'assistant', 'Okay');
-      return { reply: 'Okay', noReply: false, consentState: consent.state };
-    }
-    return { reply: null, noReply: true, reason: 'CONSENT_DENIED', consentState: consent.state };
-  }
-
-  if (consent.state === consentGate.CONSENT_STATES.PENDING) {
-    const decision = consentGate.classifyDecision(message);
-    if (decision === 'AGREE') {
-      consent = consentGate.set(chatId, consentGate.CONSENT_STATES.ALLOWED);
-      memory.addMessage(chatId, 'assistant', 'Okay');
-      return { reply: 'Okay', noReply: false, consentState: consent.state };
-    }
-    if (decision === 'DISAGREE') {
-      consent = consentGate.set(chatId, consentGate.CONSENT_STATES.DENIED);
-      memory.addMessage(chatId, 'assistant', 'Okay');
-      return { reply: 'Okay', noReply: false, consentState: consent.state };
-    }
-    const clarification = consentGate.disclosure(message, contactProfile.preferredLanguage);
-    memory.addMessage(chatId, 'assistant', clarification);
-    return { reply: clarification, noReply: false, consentState: consent.state };
-  }
-
-  const firstInteraction = consent.state === consentGate.CONSENT_STATES.UNKNOWN;
-  const finishFirstInteraction = reply => {
-    if (!firstInteraction) return reply;
-    consentGate.set(chatId, consentGate.CONSENT_STATES.PENDING);
-    return `${reply || 'Okay'} ${consentGate.disclosure(message, contactProfile.preferredLanguage)}`;
-  };
+  const firstInteraction = false;
+  const finishFirstInteraction = reply => reply;
 
   // ══════════════════════════════════════════════════════════════════════════════
   // STEP 5: Social intent classification
@@ -266,7 +324,7 @@ async function processMessage(chatId, senderName, message, fromNumber = null, op
     ownerNumber: ownerConfig.number,
     previousMessages,
     contactProfile,
-    isGroup: false,
+    isGroup: Boolean(options.isGroup),
   });
   console.log(`[SKAgent] Reply policy: ${policyDecision.reason}, should reply: ${policyDecision.shouldReply}`);
   if (!policyDecision.shouldReply) {
@@ -309,6 +367,13 @@ async function processMessage(chatId, senderName, message, fromNumber = null, op
     const reply = finishFirstInteraction('Checking...');
     memory.addMessage(chatId, 'assistant', reply);
     return { reply, taskAction: null, fileRequest: buildFileRequest(message) };
+  }
+
+  const localTaskAction = buildLocalTaskAction(message);
+  if (localTaskAction) {
+    const reply = `Barobar, ${localTaskAction.message} pathavto.`;
+    memory.addMessage(chatId, 'assistant', reply);
+    return { reply, taskAction: localTaskAction, fileRequest: null, socialIntent: socialIntent.intent, simpleBrain: 'local_task' };
   }
   
   // ══════════════════════════════════════════════════════════════════════════════
@@ -356,7 +421,7 @@ async function processMessage(chatId, senderName, message, fromNumber = null, op
   const convIntel = buildConversationContext(history, state, message, normalizedMessage);
   const relevantDialect = Object.entries(dialectPhrases).slice(0, 12)
     .map(([phrase, data]) => `${phrase} = ${data.meaning}`).join('; ');
-  const systemPrompt = SK_RUNTIME_PROMPT;
+  const systemPrompt = buildSystemPrompt();
 
   // Build PROPER CHAT HISTORY as alternating user/assistant messages
   // This is CRITICAL — LLMs are trained on this format, not text blobs
@@ -383,7 +448,7 @@ async function processMessage(chatId, senderName, message, fromNumber = null, op
   // Final messages array: system prompt first, then chat history
   const messages = [
     { role: 'system', content: systemPrompt },
-    { role: 'user', content: `CONTACT LANGUAGE: ${contactProfile.preferredLanguage || 'unknown'}\nCONSENT STATE: ${consent.state}\nKNOWN RELEVANT DIALECT: ${relevantDialect || 'none'}\nSHORT CONVERSATION STATE: ${convIntel.slice(0, 1200)}\nRECENT CHAT:\n${chatHistory.slice(0, -1).map(item => `${item.role}: ${item.content}`).join('\n')}\nCURRENT MESSAGE: ${message}` },
+    { role: 'user', content: `CONTACT LANGUAGE: ${contactProfile.preferredLanguage || 'unknown'}\nCHAT MODE: ACTIVE\nKNOWN RELEVANT DIALECT: ${relevantDialect || 'none'}\nSHORT CONVERSATION STATE: ${convIntel.slice(0, 1200)}\nRECENT CHAT:\n${chatHistory.slice(0, -1).map(item => `${item.role}: ${item.content}`).join('\n')}\nCURRENT MESSAGE: ${message}` },
   ];
   
   // ══════════════════════════════════════════════════════════════════════════════
@@ -413,12 +478,9 @@ async function processMessage(chatId, senderName, message, fromNumber = null, op
   // Check for NO_REPLY marker
   if (/<SK_NO_REPLY\s*\/?\s*>/i.test(rawReply)) {
     console.log('[SKAgent] LLM returned NO_REPLY');
-    if (firstInteraction) {
-      const reply = finishFirstInteraction(null);
-      memory.addMessage(chatId, 'assistant', reply);
-      return { reply, noReply: false, taskAction: null, fileRequest: null };
-    }
-    return { reply: null, noReply: true, taskAction: null, fileRequest: null };
+    const reply = socialIntent.intent === 'CONVERSATION_ENDING' ? 'Bye' : 'Okay';
+    memory.addMessage(chatId, 'assistant', reply);
+    return { reply, noReply: false, taskAction: null, fileRequest: null, socialIntent: socialIntent.intent };
   }
   
   // ══════════════════════════════════════════════════════════════════════════════
@@ -430,22 +492,15 @@ async function processMessage(chatId, senderName, message, fromNumber = null, op
   
   const taskBlock = parseBlock(rawReply, 'SK_TASK');
   if (taskBlock.found && taskBlock.data) {
-    taskAction = taskBlock.data;
-    
-    // Force routing based on keywords
-    const mentionsOwner = textMentionsOwner(message);
-    const saysSelfRemind = textSaysSelfRemind(message);
-    
-    if (mentionsOwner && !saysSelfRemind) {
-      taskAction.recipients = 'owner';
-    }
-    
-    if (saysSelfRemind && !mentionsOwner) {
-      taskAction.recipients = 'self';
-    }
-    
-    if (!taskAction.recipients) {
-      taskAction.recipients = mentionsOwner ? 'owner' : 'self';
+    const isPastTaskComplaint = /\b(?:ka\s+nahi|ka\s+nahi\s+kela|why\s+didn'?t|not\s+sent|nahi\s+kela)\b/i.test(message) &&
+      !/\b(?:remind|reminder|schedule|set\s+(?:an\s+)?alarm|send\s+me|msg\s+kar|message\s+kar)\b/i.test(message);
+    taskAction = isPastTaskComplaint ? null : taskBlock.data;
+    if (taskAction) {
+      const mentionsOwner = textMentionsOwner(message);
+      const saysSelfRemind = textSaysSelfRemind(message);
+      if (mentionsOwner && !saysSelfRemind) taskAction.recipients = 'owner';
+      if (saysSelfRemind && !mentionsOwner) taskAction.recipients = 'self';
+      if (!taskAction.recipients) taskAction.recipients = mentionsOwner ? 'owner' : 'self';
     }
   }
   
@@ -528,12 +583,12 @@ async function processMessage(chatId, senderName, message, fromNumber = null, op
 function isOwnerRecipient(recipients) {
   if (!recipients) return false;
   const r = String(recipients).toLowerCase().trim();
-  return r === 'owner' || r.includes('suraj') || r.includes('boss') || r.includes('zalke');
+  return r === 'owner' || r.includes('boss') || ownerNameRegex().test(r);
 }
 
 function scheduleTask(chatId, senderName, taskAction) {
   const ownerConfig = getOwnerConfig();
-  const timeExpr = taskAction.timeExpression || '';
+  const timeExpr = taskAction.timeExpression || taskAction.message || taskAction.description || '';
   const parsed = timeExpr ? scheduler.parseTimeExpression(timeExpr) : null;
   const recipients = taskAction.recipients || 'self';
 
@@ -574,7 +629,8 @@ function setOwnerConfigWrapper(cfg) {
 
 module.exports = {
   processMessage,
-  runtimePrompt: SK_RUNTIME_PROMPT,
+  runtimePrompt: buildSystemPrompt(),
+  buildSystemPrompt,
   scheduleTask,
   setOwnerConfig: setOwnerConfigWrapper,
   getOwnerConfig,

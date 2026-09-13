@@ -20,8 +20,8 @@ test('normalizes direct Roman Marathi follow-ups for the LLM', () => {
 });
 
 test('runtime prompt is compact and conversation-focused', () => {
-  assert.match(runtimePrompt, /understand what the latest message actually means/);
-  assert.match(runtimePrompt, /<SK_NO_REPLY>/);
+  assert.match(runtimePrompt, /actually read the last message/);
+  assert.match(runtimePrompt, /keep the conversation moving/);
   assert.doesNotMatch(runtimePrompt, /PATTERN A|RELATIONSHIP-SPECIFIC|Example:/i);
 });
 
@@ -51,20 +51,20 @@ test('builds role-aware context with current contact message last', () => {
     { role: 'contact', content: '11' },
     { role: 'assistant', content: 'Ha brr' },
   ], { activeTopic: 'merit list', course: '', region: '', excludedRegions: [], pendingLists: [], lastOwnerQuestion: 'final merit list kadhi ahe', lastContactAnswer: '11' }, 'Br', 'Br');
-  assert.match(context, /OWNER\/SURAJ: final merit list kadhi ahe/);
-  assert.match(context, /CURRENT CONTACT MESSAGE:\nBr/);
+  assert.match(context, /YOU \(Suraj\): final merit list kadhi ahe/);
+  assert.match(context, /Current message as typed: "Br"/);
 });
 
 test('merges consecutive WhatsApp messages into one thought', () => {
   assert.equal(mergeMessages(['Aani college list', 'te ks kru t aata', 'seat matrix pn pahin']), 'Aani college list te ks kru t aata seat matrix pn pahin');
 });
 
-test('returns no reply for a standalone acknowledgement', async () => {
+test('returns a short reply for a standalone acknowledgement', async () => {
   const chatId = 'agent-fast-path-test';
   consentGate.set(chatId, consentGate.CONSENT_STATES.ALLOWED);
   const result = await processMessage(chatId, 'Contact', 'Br');
-  assert.equal(result.noReply, true);
-  assert.equal(result.reply, null);
+  assert.equal(result.noReply, undefined);
+  assert.match(result.reply, /./);
   memory.clearHistory('agent-fast-path-test');
   consentGate.reset();
 });

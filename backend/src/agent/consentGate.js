@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { getDataPath } = require('../config/storage');
+const { getOwnerConfig } = require('./personaEngine');
 
 const CONSENT_STATES = Object.freeze({
   UNKNOWN: 'UNKNOWN',
@@ -28,7 +29,7 @@ function loadConsent() {
 
 function persist() {
   fs.mkdirSync(path.dirname(consentPath), { recursive: true });
-  const temporaryPath = `${consentPath}.tmp`;
+  const temporaryPath = `${consentPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
   fs.writeFileSync(temporaryPath, `${JSON.stringify(consentByContact, null, 2)}\n`, 'utf8');
   fs.renameSync(temporaryPath, consentPath);
 }
@@ -63,9 +64,10 @@ function languageFor(text, preferredLanguage = '') {
 
 function disclosure(text, preferredLanguage) {
   const language = languageFor(text, preferredLanguage);
-  if (language === 'hindi') return 'Main Mr. Suraj ka AI assistant hoon. Mere saath chat continue karna hai?';
-  if (language === 'marathi') return 'Mi Mr. Suraj cha AI assistant ahe. Mazyashi chat continue karaychi ka?';
-  return "I'm Mr. Suraj's AI assistant. Want to continue chatting with me?";
+  const name = getOwnerConfig().shortName || 'the owner';
+  if (language === 'hindi') return `Main Mr. ${name} ka AI assistant hoon. Mere saath chat continue karna hai?`;
+  if (language === 'marathi') return `Mi Mr. ${name} cha AI assistant ahe. Mazyashi chat continue karaychi ka?`;
+  return `I'm Mr. ${name}'s AI assistant. Want to continue chatting with me?`;
 }
 
 function reset() {

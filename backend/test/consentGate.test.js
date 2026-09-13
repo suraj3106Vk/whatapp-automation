@@ -33,29 +33,30 @@ test('generates short language-matched disclosure', () => {
   assert.match(consentGate.disclosure('Haan nahi', ''), /chat continue/);
 });
 
-test('enforces the runtime consent lifecycle without normal LLM routing', async () => {
+test('keeps normal conversation active and stops only after an explicit stop', async () => {
   const chatId = 'consent-runtime-test';
   memory.clearHistory(chatId);
 
   let result = await skAgent.processMessage(chatId, 'Contact', 'Hi');
-  assert.match(result.reply, /AI assistant/);
-  assert.equal(consentGate.get(chatId).state, 'PENDING');
+  assert.match(result.reply, /./);
+  assert.equal(consentGate.get(chatId).state, 'UNKNOWN');
 
   result = await skAgent.processMessage(chatId, 'Contact', 'Ha');
-  assert.equal(result.reply, 'Okay');
-  assert.equal(consentGate.get(chatId).state, 'ALLOWED');
+  assert.match(result.reply, /./);
 
-  result = await skAgent.processMessage(chatId, 'Contact', 'AI nako ata');
-  assert.equal(result.reply, 'Okay');
-  assert.equal(consentGate.get(chatId).state, 'DENIED');
+  result = await skAgent.processMessage(chatId, 'Contact', 'stop');
+  assert.equal(result.reply, null);
+  assert.equal(result.reason, 'CHAT_STOPPED');
 
   result = await skAgent.processMessage(chatId, 'Contact', 'hello');
   assert.equal(result.reply, null);
   assert.equal(result.noReply, true);
 
-  result = await skAgent.processMessage(chatId, 'Contact', 'AI on kar');
-  assert.equal(result.reply, 'Okay');
-  assert.equal(consentGate.get(chatId).state, 'ALLOWED');
+  result = await skAgent.processMessage(chatId, 'Contact', 'start');
+  assert.match(result.reply, /./);
+
+  result = await skAgent.processMessage(chatId, 'Contact', 'hello');
+  assert.match(result.reply, /./);
 
   memory.clearHistory(chatId);
 });
