@@ -82,6 +82,16 @@ test('document-content questions do not trigger outbound file lookup', async () 
   assert.notEqual(result.reply, 'Checking...');
 });
 
+test('extracted document content reaches analysis instead of media acknowledgement', async () => {
+  const result = await processMessage('media-analysis-test', 'Contact', '[MEDIA_CONTENT]\nPDF content:\nAlgebra formulas and examples', null, {
+    hasMedia: true,
+    mediaType: 'document',
+    fileName: 'Notes.pdf',
+  });
+  assert.notEqual(result.simpleBrain, 'media_received');
+  assert.equal(result.fileRequest, null);
+});
+
 test('contact lookup returns only an exact cached WhatsApp contact', () => {
   contactDirectory.clear();
   assert.equal(contactDirectory.find('Sanket'), null);

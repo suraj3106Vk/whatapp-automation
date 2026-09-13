@@ -338,7 +338,8 @@ async function processMessage(chatId, senderName, message, fromNumber = null, op
   
   const intent = detectIntent(message, options);
 
-  if (options.hasMedia && ['image', 'document', 'video', 'audio'].includes(options.mediaType) &&
+  const hasExtractedMediaContent = /\[MEDIA_CONTENT\]/i.test(message);
+  if (options.hasMedia && !hasExtractedMediaContent && ['image', 'document', 'video', 'audio'].includes(options.mediaType) &&
       !/(?:send|share|bhej|pathav|forward|upload|save|keep|store)/i.test(message)) {
     const mediaLabel = options.mediaType === 'document' ? 'document' : options.mediaType;
     const reply = `Document milala${mediaLabel === 'document' ? '' : `, ${mediaLabel}`}.`;
@@ -455,9 +456,12 @@ async function processMessage(chatId, senderName, message, fromNumber = null, op
   });
   
   // Final messages array: system prompt first, then chat history
+  const mediaInstruction = hasExtractedMediaContent
+    ? '\nDOCUMENT/IMAGE ANALYSIS RULE: The message contains extracted or analyzed media content. Answer the user\'s question using that content. If no question is asked, give a concise summary. Do not ask the user to send the document again and do not invent details absent from the extracted content.'
+    : '';
   const messages = [
     { role: 'system', content: systemPrompt },
-    { role: 'user', content: `CONTACT LANGUAGE: ${contactProfile.preferredLanguage || 'unknown'}\nCHAT MODE: ACTIVE\nKNOWN RELEVANT DIALECT: ${relevantDialect || 'none'}\nSHORT CONVERSATION STATE: ${convIntel.slice(0, 1200)}\nRECENT CHAT:\n${chatHistory.slice(0, -1).map(item => `${item.role}: ${item.content}`).join('\n')}\nCURRENT MESSAGE: ${message}` },
+    { role: 'user', content: `CONTACT LANGUAGE: ${contactProfile.preferredLanguage || 'unknown'}\nCHAT MODE: ACTIVE${mediaInstruction}\nKNOWN RELEVANT DIALECT: ${relevantDialect || 'none'}\nSHORT CONVERSATION STATE: ${convIntel.slice(0, 1200)}\nRECENT CHAT:\n${chatHistory.slice(0, -1).map(item => `${item.role}: ${item.content}`).join('\n')}\nCURRENT MESSAGE: ${message}` },
   ];
   
   // ══════════════════════════════════════════════════════════════════════════════
