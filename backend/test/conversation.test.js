@@ -6,7 +6,8 @@ const { classifyMessage, isAcknowledgement } = require('../src/agent/intentClass
 const state = require('../src/agent/conversationState');
 const { buildConversationContext } = require('../src/agent/contextBuilder');
 const memory = require('../src/memory/conversationMemory');
-const { processMessage, runtimePrompt } = require('../src/agent/skAgent');
+const { buildLocalTaskAction, processMessage, runtimePrompt } = require('../src/agent/skAgent');
+const { parseTimeExpression } = require('../src/agent/taskScheduler');
 const consentGate = require('../src/agent/consentGate');
 
 test('normalizes Roman Marathi without changing the original', () => {
@@ -37,6 +38,28 @@ test('classifies common WhatsApp fragments contextually', () => {
   assert.equal(classifyMessage('11', '11', 'final merit list kadhi ahe'), 'ANSWER_TO_PREVIOUS');
   assert.equal(classifyMessage('Chukich sangte te', 'Chukich sangte te'), 'CORRECTION');
   assert.equal(isAcknowledgement('brr'), true);
+});
+
+test('creates a scheduled message from Marathi clock phrasing', () => {
+  const action = buildLocalTaskAction('Ha mala msg karsil 11:42 la I am ok');
+  assert.deepEqual(action && {
+    type: action.type,
+    message: action.message,
+    description: action.description,
+  }, {
+    type: 'scheduled_message',
+    message: 'I am ok',
+    description: 'I am ok',
+  });
+});
+
+test('keeps an explicit 11:42 clock time as 11:42 after noon', () => {
+  const refTime = new Date('2026-09-14T15:00:00').getTime();
+  const parsed = parseTimeExpression('11:42 la', refTime);
+  const trigger = new Date(parsed.triggerAt);
+  assert.equal(trigger.getHours(), 11);
+  assert.equal(trigger.getMinutes(), 42);
+  assert.equal(trigger.getDate(), 15);
 });
 
 test('stores college topic and exclusion state', () => {

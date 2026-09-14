@@ -656,6 +656,7 @@ module.exports = {
   processMessage,
   runtimePrompt: buildSystemPrompt(),
   buildSystemPrompt,
+  buildLocalTaskAction,
   scheduleTask,
   setOwnerConfig: setOwnerConfigWrapper,
   getOwnerConfig,

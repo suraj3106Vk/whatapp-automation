@@ -230,7 +230,6 @@ function parseClockTime(text, refDate) {
   if (match24) {
     let hour = parseInt(match24[1]);
     const minute = parseInt(match24[2]);
-    if (hour >= 1 && hour <= 11 && new Date(refDate).getHours() >= 12) hour += 12;
     const d = new Date(refDate);
     d.setHours(hour, minute, 0, 0);
     return d.getTime();
