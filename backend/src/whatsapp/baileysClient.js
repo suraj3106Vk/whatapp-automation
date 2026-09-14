@@ -72,17 +72,32 @@ let reconnectAttempt = 0;
 let state = 'disconnected';
 let qr = null;
 let qrBase64 = null;
+
+// Reverse lookup so logs/dashboard show "restartRequired" instead of a bare
+// numeric code — makes it possible to actually tell "this is fine, Baileys
+// always does this right after pairing" from "this is a real logout".
+const DISCONNECT_REASON_NAMES = Object.fromEntries(
+  Object.entries(DisconnectReason).map(([name, code]) => [code, name])
+);
+function describeDisconnect(error) {
+  const statusCode = error?.output?.statusCode ?? error?.statusCode;
+  return { statusCode, reasonName: DISCONNECT_REASON_NAMES[statusCode] || 'unknown', message: error?.message };
+}
 let ownerChatId = null;
 let messageLog = [];
 let schedulerBound = false;
 let explicitLogout = false;
+let lastDisconnectReason = null;
 const BOT_STARTED_AT = Date.now();
 const inboundGuard = createInboundGuard();
 let connectionGeneration = 0;
 
 const settings = {
   autoReply: true,
-  replyToGroups: process.env.ENABLE_GROUPS !== 'false',
+  // Cosmetic only now — group replies are hard-disabled above regardless of
+  // this flag (see the isGroup check in the message handler). Kept so the
+  // settings API/UI don't break, but toggling it does nothing.
+  replyToGroups: false,
   blacklistedChats: new Set(),
   whitelistedOnly: false,
   whitelistedChats: new Set(),
@@ -103,6 +118,11 @@ function getState() {
     persistentStorage: !storage.isRailway() || AUTH_PATH === path.resolve('/data/whatsapp-auth'),
     existingSession: hasExistingWhatsAppAuth(),
     owner: ownerChatId ? { name: OWNER_NAME, shortName: OWNER_SHORT_NAME, chatId: ownerChatId } : null,
+    // Surfaced so the dashboard can show *why* it disconnected instead of
+    // just spinning — "restart required" right after pairing is normal,
+    // "logged out" / "auth failure" means a fresh QR scan is genuinely
+    // needed, anything else is a transient network blip being retried.
+    lastDisconnectReason,
   };
 }
 function getMessageLog() { return messageLog.slice(-100); }
@@ -217,7 +237,13 @@ async function processIncomingMessage(message) {
   }
   processedMessages.set(id, now);
   const isGroup = chatId.endsWith('@g.us');
-  if (!settings.autoReply || (isGroup && !settings.replyToGroups) || settings.blacklistedChats.has(chatId) || (settings.whitelistedOnly && !settings.whitelistedChats.has(chatId))) return;
+  // Groups are never replied to — this is a hard rule, not a toggle, so it
+  // can't be silently re-enabled by a settings flag defaulting the wrong
+  // way. Checked here (skip the whole pipeline) AND again as the very first
+  // thing in skAgent.processMessage, so there's no path — not even an
+  // error-fallback — that can send a reply into a group.
+  if (isGroup) return;
+  if (!settings.autoReply || settings.blacklistedChats.has(chatId) || (settings.whitelistedOnly && !settings.whitelistedChats.has(chatId))) return;
   return enqueue(chatId, async () => {
     const type = extracted.type;
     const body = extracted.text;
@@ -259,7 +285,12 @@ async function processIncomingMessage(message) {
         caption: extracted.caption,
       });
     }
-    catch (error) { logger.error({ err: error.message }, 'agent processing failed'); result = { reply: 'Sorry, I had an error processing your message. Please try again.' }; }
+    catch (error) {
+      logger.error({ err: error.message }, 'agent processing failed');
+      // Groups never get a fallback reply either — same reasoning as the
+      // hard block above.
+      result = isGroup ? { reply: null, noReply: true } : { reply: 'Sorry, I had an error processing your message. Please try again.' };
+    }
     let responseText = result.reply || null;
     if (result.taskAction) {
       const task = skAgent.scheduleTask(chatId, senderName, result.taskAction);
@@ -312,7 +343,25 @@ async function startSocket() {
     const { state: authState, saveCreds } = await loadAuthState();
     const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: [2, 3000, 1015901307] }));
     const generation = ++connectionGeneration;
-    const activeSocket = makeWASocket({ version, auth: { creds: authState.creds, keys: makeCacheableSignalKeyStore(authState.keys, logger) }, browser: Browsers.ubuntu('SK Agent'), logger, printQRInTerminal: false, markOnlineOnConnect: false, syncFullHistory: false, generateHighQualityLinkPreview: false });
+    const activeSocket = makeWASocket({
+      version,
+      auth: { creds: authState.creds, keys: makeCacheableSignalKeyStore(authState.keys, logger) },
+      browser: Browsers.ubuntu('SK Agent'),
+      logger,
+      printQRInTerminal: false,
+      markOnlineOnConnect: false,
+      syncFullHistory: false,
+      generateHighQualityLinkPreview: false,
+      // Connection resilience — cloud hosts (Railway etc) proxy the
+      // websocket, and idle/slow connections get dropped more readily than
+      // on a home network. These keep the link alive and give slow
+      // handshakes room instead of timing out mid-pairing, which is what
+      // caused repeated QR-regeneration loops.
+      keepAliveIntervalMs: 20_000,
+      connectTimeoutMs: 60_000,
+      defaultQueryTimeoutMs: 60_000,
+      retryRequestDelayMs: 2_000,
+    });
     socket = activeSocket;
     activeSocket.ev.on('creds.update', saveCreds);
     activeSocket.ev.on('contacts.upsert', entries => contactDirectory.upsert(entries));
@@ -322,14 +371,17 @@ async function startSocket() {
       if (generation !== connectionGeneration) return;
       const { connection, lastDisconnect, qr: nextQr } = update;
       if (nextQr) emitQr(nextQr).catch(error => logger.error({ err: error.message }, 'QR generation failed'));
-      if (connection === 'open') { state = 'ready'; qr = null; qrBase64 = null; reconnectAttempt = 0; ownerChatId = activeSocket.user?.id || null; if (ownerChatId) skAgent.setOwnerConfig({ name: OWNER_NAME, shortName: OWNER_SHORT_NAME, chatId: ownerChatId }); if (io) io.emit('status', getState()); console.log(existingAuth ? '[WhatsApp] Session restored successfully' : '[WhatsApp] Connected'); logger.info({ user: ownerChatId, authPath: AUTH_PATH, existingAuth }, existingAuth ? 'WhatsApp session restored successfully' : 'WhatsApp connected'); }
+      if (connection === 'open') { state = 'ready'; qr = null; qrBase64 = null; reconnectAttempt = 0; lastDisconnectReason = null; ownerChatId = activeSocket.user?.id || null; if (ownerChatId) skAgent.setOwnerConfig({ name: OWNER_NAME, shortName: OWNER_SHORT_NAME, chatId: ownerChatId }); if (io) io.emit('status', getState()); console.log(existingAuth ? '[WhatsApp] Session restored successfully' : '[WhatsApp] Connected'); logger.info({ user: ownerChatId, authPath: AUTH_PATH, existingAuth }, existingAuth ? 'WhatsApp session restored successfully' : 'WhatsApp connected'); }
       if (connection === 'close') {
         const error = lastDisconnect?.error;
         const loggedOut = isLoggedOut(error);
         const authFailure = isAuthFailure(error);
+        const disconnectInfo = describeDisconnect(error);
+        lastDisconnectReason = disconnectInfo;
         socket = null;
         state = loggedOut || authFailure ? 'logged_out' : 'disconnected';
-        logger.error({ name: error?.name, message: error?.message, statusCode: error?.output?.statusCode || error?.statusCode, stack: error?.stack }, 'WhatsApp connection closed');
+        logger.error({ ...disconnectInfo, stack: error?.stack }, 'WhatsApp connection closed');
+        console.log(`[WhatsApp] Connection closed: ${disconnectInfo.reasonName} (${disconnectInfo.statusCode ?? 'no code'}) — ${disconnectInfo.message || 'no message'}`);
 
         if (authFailure) {
           try {
@@ -342,10 +394,16 @@ async function startSocket() {
         }
 
         if (!loggedOut && !authFailure && !explicitLogout && !reconnectTimer) {
-          const delay = getDelay(reconnectAttempt++);
+          // restartRequired (515) is Baileys' own "pairing just succeeded,
+          // reconnect now to use the saved session" signal — not an error.
+          // Reconnect immediately instead of applying the normal backoff,
+          // so a successful QR scan doesn't look like it stalled.
+          const isExpectedRestart = disconnectInfo.reasonName === 'restartRequired';
+          const delay = isExpectedRestart ? 250 : getDelay(reconnectAttempt++);
           state = 'reconnecting';
           reconnectTimer = setTimeout(() => { reconnectTimer = null; startSocket().catch(reconnectError => logger.error({ err: reconnectError.message, stack: reconnectError.stack }, 'WhatsApp reconnect failed')); }, delay);
-          logger.warn({ delay, reason: error?.message }, 'WhatsApp reconnect scheduled');
+          logger.warn({ delay, reason: disconnectInfo.reasonName }, 'WhatsApp reconnect scheduled');
+          console.log(`[WhatsApp] Reconnecting in ${delay}ms (${isExpectedRestart ? 'expected post-pairing restart' : 'retry after ' + disconnectInfo.reasonName})`);
         }
         if (io) io.emit('status', getState());
       }

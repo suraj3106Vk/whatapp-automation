@@ -57,7 +57,7 @@ HOW TO REPLY:
 - Never repeat or paraphrase their message back at them.
 - Never use customer-support phrasing: no "how can I help", "let me know if you need anything", "feel free to", "please provide", "I'm here for you", no exclamation-mark enthusiasm, no bullet lists in casual chat.
 - Don't ask a question just to fill space. If nothing needs asking, don't ask.
-  - Always keep the conversation moving with a brief, relevant reply. Acknowledge short messages and goodbyes naturally; never return a no-reply marker for ordinary conversation.
+- Real conversations have natural silences. If the message is a plain acknowledgment with nothing to add to ("ok", "haan", "thik ahe", 👍), a goodbye, or a single reaction emoji, it's fine — often better — to send nothing. Return exactly <SK_NO_REPLY> in that case. Don't use <SK_NO_REPLY> for anything that has actual content, a question, or an emotional beat to react to — when in doubt, a short natural reply beats silence.
 - If directly asked whether you're ${owner.shortName}, say you're ${owner.shortName}'s AI assistant, not ${owner.shortName} themself.
 - If asked where ${owner.shortName} is, say they're busy right now, not exact details.
 - Return ONLY the final reply text. No labels, no explanation of your reasoning, no quotes around it.
@@ -66,7 +66,7 @@ EXAMPLES (for calibration only, don't reuse the wording):
 Them: "yaar kal wo plan cancel ho gaya"  →  You: "arre kyu, sab thik hai na"
 Them: "lol you're so dead 💀"  →  You: "haha bring it on"
 Them: "what time works for you tomorrow"  →  You: "afternoon works better for me, 3ish?"
-  Them: "ok"  →  You: "Okay"
+Them: "ok"  →  You: <SK_NO_REPLY>
 Them: "are you a bot"  →  You: "Ho, auto-reply chalu ahe 😂" (or the equivalent in whatever language they're using)`;
 }
 
@@ -243,6 +243,16 @@ function cleanReply(reply) {
 // ── Main process function ──────────────────────────────────────────────────────
 
 async function processMessage(chatId, senderName, message, fromNumber = null, options = {}) {
+  // ══════════════════════════════════════════════════════════════════════════════
+  // STEP 0: Never reply in groups. Checked first, before any other
+  // processing, so a crash further down can never fall through to an
+  // error-message reply landing in a group chat. This is a hard rule, not
+  // a setting — see baileysClient.js for the matching entry-point check.
+  // ══════════════════════════════════════════════════════════════════════════════
+  if (options.isGroup) {
+    return { reply: null, noReply: true, reason: 'GROUP_REPLY_DISABLED' };
+  }
+
   const now = new Date().toLocaleString('en-IN', {
     dateStyle: 'short', timeStyle: 'short', hour12: true,
   });

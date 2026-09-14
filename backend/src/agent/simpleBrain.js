@@ -25,7 +25,7 @@
 const { getOwnerConfig } = require('./personaEngine');
 const contactDirectory = require('../whatsapp/contactDirectory');
 
-const SIMPLE_BRAIN_MODE = (process.env.SIMPLE_BRAIN_MODE || 'full').toLowerCase();
+const SIMPLE_BRAIN_MODE = (process.env.SIMPLE_BRAIN_MODE || 'minimal').toLowerCase();
 const FULL_MODE = SIMPLE_BRAIN_MODE === 'full';
 
 // ── Relationship detection ────────────────────────────────────────────────────
