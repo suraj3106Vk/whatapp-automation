@@ -62,12 +62,20 @@ HOW TO REPLY:
 - If asked where ${owner.shortName} is, say they're busy right now, not exact details.
 - Return ONLY the final reply text. No labels, no explanation of your reasoning, no quotes around it.
 
+REMINDERS / SCHEDULED MESSAGES: if the sender asks to be reminded of something, asks you to send a message at a later time, or asks you to set an alarm — include exactly one <SK_TASK>...</SK_TASK> block SOMEWHERE in your reply (your normal conversational reply text goes around it, e.g. "Barobar, set kela." <SK_TASK>{...}</SK_TASK>). It will be stripped out before the message is sent, so don't worry about it looking out of place. The block must contain ONLY this JSON, nothing else:
+<SK_TASK>{"type": "scheduled_message" or "recurring", "message": "<exactly what should be sent/remembered, nothing else — no leftover 'at 5pm' or 'remind me' in this field>", "timeExpression": "<the time part of what they said, in their own words, e.g. '5:30 pm' or 'tomorrow morning' or 'every day at 9am'>"}</SK_TASK>
+The one thing that matters most here: "message" must be ONLY the actual reminder content, cleanly separated from the time. If they say "11:23 la oyeii msg karsil" the message is "oyeii", not the whole sentence. If they say "remind me to call mom at 6pm" the message is "call mom", not "call mom at 6pm" or "remind me to call mom".
+Do NOT create a task for vague or past-tense mentions of reminders (e.g. "did you send that reminder", "why didn't it send") — only for a genuine new request with an actual time.
+
+- If the message contains extracted document/image analysis (marked [MEDIA_CONTENT]), that content is CONTEXT for you to react to naturally — never copy or forward the raw analysis/description as your reply. React the way a person would glance at the file and comment on it in a line or two, not describe it in full.
+
 EXAMPLES (for calibration only, don't reuse the wording):
 Them: "yaar kal wo plan cancel ho gaya"  →  You: "arre kyu, sab thik hai na"
 Them: "lol you're so dead 💀"  →  You: "haha bring it on"
 Them: "what time works for you tomorrow"  →  You: "afternoon works better for me, 3ish?"
 Them: "ok"  →  You: <SK_NO_REPLY>
-Them: "are you a bot"  →  You: "Ho, auto-reply chalu ahe 😂" (or the equivalent in whatever language they're using)`;
+Them: "are you a bot"  →  You: "Ho, auto-reply chalu ahe 😂" (or the equivalent in whatever language they're using)
+Them: "mala sharp 11:23 la oyeii msg karsil"  →  You: "Barobar, sharp 11:23 la karto. <SK_TASK>{"type": "scheduled_message", "message": "oyeii", "timeExpression": "sharp 11:23"}</SK_TASK>"`;
 }
 
 // ── Fast-path patterns ──────────────────────────────────────────────────────────
@@ -151,10 +159,32 @@ function buildLocalTaskAction(text) {
   const parsed = scheduler.parseTimeExpression(text);
   if (!parsed?.triggerAt) return null;
 
-  const shortMessage = text.match(/\b(?:msg|message)\s+(?:kar\w*\s+)?\d{1,2}(?:[:.]\d{1,2})?\s*(?:la|at)\s+(.+?)(?:\s+manun\b|\s*$)/i) ||
-    text.match(/\b\d{1,2}(?:[:.]\d{1,2})?\s*(?:la|at)?\s+(?:msg|message)\s+(?:kar\w*\s+)?(.+?)(?:\s+manun\b|\s*$)/i);
-  if (shortMessage) {
-    const message = shortMessage[1].trim();
+  // Fast-path only for a small set of well-structured phrasings where the
+  // reminder content can be extracted with confidence. Anything else
+  // returns null and falls through to the LLM (which is taught to create
+  // <SK_TASK> blocks itself — see buildSystemPrompt) instead of guessing
+  // with a regex and risking a garbled reminder message.
+  const patterns = [
+    // "msg 11 la buy milk" / "message kar 5:30 at call mom"
+    /\b(?:msg|message)\s+(?:kar\w*\s+)?\d{1,2}(?:[:.]\d{1,2})?\s*(?:la|at)\s+(.+?)(?:\s+manun\b|\s*$)/i,
+    // "11 la msg buy milk" / "5:30 at message kar call mom"
+    /\b\d{1,2}(?:[:.]\d{1,2})?\s*(?:la|at)?\s+(?:msg|message)\s+(?:kar\w*\s+)?(.+?)(?:\s+manun\b|\s*$)/i,
+    // "11:23 la oyeii msg karsil" — content sits BETWEEN the time and the
+    // msg-verb, which is common word order in Marathi/Hindi ("[time] la
+    // [content] msg karsil" = "at [time] you'll message [content]"). This
+    // is the pattern the previous two missed, leaving the whole sentence
+    // in as the reminder text instead of just the intended word/phrase.
+    /\b\d{1,2}(?:[:.]\d{1,2})?\s*(?:la|at)\s+(.+?)\s+(?:msg|message)\s+(?:kar\w*|karsil|karshil|karsik)?\s*$/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    const message = match[1].trim();
+    // Sanity check: if the "content" we pulled out still contains leftover
+    // scheduling scaffolding (mala/remind/digits/etc), the pattern matched
+    // too loosely — better to defer to the LLM than send a garbled reminder.
+    if (!message || message.length > 60 || /\b(?:mala|remind|reminder|schedule|alarm|\d{1,2}[:.]\d{2})\b/i.test(message)) continue;
     return {
       type: parsed.isRecurring ? 'recurring' : 'scheduled_message',
       description: message,
@@ -164,40 +194,7 @@ function buildLocalTaskAction(text) {
     };
   }
 
-  if (/\binform\b/i.test(text) && /\b(?:meeting|metting|meet)\b/i.test(text)) {
-    return {
-      type: parsed.isRecurring ? 'recurring' : 'scheduled_message',
-      description: 'Suraj la college chi info sang',
-      message: 'Suraj la college chi info sang',
-      timeExpression: text,
-      interval: parsed.interval || null,
-    };
-  }
-
-  const messageMatch = text.match(/\b(?:at|la)\s+(.+?)\s+(?:msg|message)\s+(?:kar|karo|de|pathav|bhej)?\s*$/i);
-  let message = messageMatch?.[1]?.trim() || text.trim();
-  message = message.replace(/\s+\d{1,2}(?:[:.]\d{1,2})?\s*(?:la|at)?\s*$/i, '');
-  message = message.replace(/\b(?:ani\s+)?mala\s+(?:msg|message)\s+pan\b.*$/i, '');
-  if (/\binform\b/i.test(message)) {
-    message = /\bmeeting\b/i.test(message)
-      ? 'Suraj la college chi info sang'
-      : message.replace(/\b(?:inform|karsil|karsik|karshil)\b/gi, 'inform kar');
-  }
-  message = message
-    .replace(/\b(?:mala|please|ek\s+kam\s+kar|remind\s+me|reminder|set\s+(?:an\s+)?alarm|schedule)\b/gi, '')
-    .replace(/\b(?:at|la)\s+\d{1,2}(?:[:.]\d{1,2})?\b/gi, '')
-    .replace(/\b(?:send|msg|message|bhej|pathav|kar|karo|de)\b/gi, '')
-    .replace(/\b(?:ani|and)\s+(?:mala\s+)?(?:msg|message)\s+pan\b.*$/i, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!message) message = 'reminder';
-  return {
-    type: parsed.isRecurring ? 'recurring' : 'scheduled_message',
-    description: message,
-    message,
-    timeExpression: text,
-    interval: parsed.interval || null,
-  };
+  return null;
 }
 
 function buildFileRequest(text) {
@@ -472,7 +469,7 @@ async function processMessage(chatId, senderName, message, fromNumber = null, op
   
   // Final messages array: system prompt first, then chat history
   const mediaInstruction = hasExtractedMediaContent
-    ? '\nDOCUMENT/IMAGE ANALYSIS RULE: The message contains extracted or analyzed media content. Answer the user\'s question using that content. If no question is asked, give a concise summary. Do not ask the user to send the document again and do not invent details absent from the extracted content.'
+    ? '\nDOCUMENT/IMAGE ANALYSIS RULE: The message contains extracted/analyzed media content below — that is background information for you, not something to output. React to it the way a person glancing at the file would: a short natural comment or answer, in your own words. NEVER copy, forward, or paste the analysis/description text itself as your reply, even partially. If no question was asked, just react briefly (e.g. acknowledge what it is) — don\'t summarize the whole thing.'
     : '';
   const messages = [
     { role: 'system', content: systemPrompt },

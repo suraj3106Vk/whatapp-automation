@@ -294,8 +294,13 @@ async function processIncomingMessage(message) {
     let responseText = result.reply || null;
     if (result.taskAction) {
       const task = skAgent.scheduleTask(chatId, senderName, result.taskAction);
-      const confirmation = taskConfirmation(task);
-      responseText = responseText ? `${responseText}\n${confirmation}` : confirmation;
+      // The reply text already confirms the task in natural language — both
+      // the regex fast-path ("Barobar, {x} pathavto.") and the LLM path
+      // (instructed to acknowledge the task inline) already say it. Only
+      // bolt on the mechanical taskConfirmation() line as a fallback if for
+      // some reason there's no reply text at all, instead of always
+      // concatenating both and getting two redundant "okay"s back to back.
+      responseText = responseText || taskConfirmation(task);
     }
     if (responseText) { await sendText(chatId, responseText); logMessage({ type: 'outgoing', chatId, senderName: 'SK Agent', message: responseText, timestamp: Date.now() }); }
     if (result.fileRequest) await handleFileRequest(chatId, result.fileRequest, senderName);

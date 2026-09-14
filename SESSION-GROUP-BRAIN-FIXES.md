@@ -67,3 +67,42 @@ closed: <reason>` line — that'll tell us exactly what to fix next.
   exact-match `stop`/`start` command in `replyPolicy.js`, which doesn't have
   the "misreads a random 'no' as declining forever" bug. That part is
   already fine as-is.
+
+## 4. Task/reminder pipeline — the "oyeii" bug
+
+From your transcript, two separate real bugs, both fixed:
+
+**Garbled reminder text.** `buildLocalTaskAction()` (the fast-path regex
+parser that handles reminders before the AI ever runs) couldn't handle
+"...la oyeii msg karsil" — the reminder content sits *between* the time and
+the verb in that word order, which none of the existing patterns matched.
+It fell through to a generic cleanup pass that left most of the original
+sentence in as the reminder text instead of just "oyeii". Also, **the AI
+itself had zero instructions about how to create reminders** — no
+`<SK_TASK>` format documentation in the system prompt at all — so if the
+regex fast-path missed, there was no fallback; reminders just silently
+didn't work right.
+
+Fixed by:
+- Adding a third pattern that matches this exact word order.
+- Adding a sanity check: if what gets extracted still looks like it has
+  scheduling scaffolding left in it (stray digits, "remind", etc), the
+  fast-path backs off instead of returning a garbled result.
+- Teaching the AI the `<SK_TASK>` JSON format directly in the system prompt,
+  with the exact "oyeii" example, so ambiguous phrasing the regex can't
+  confidently handle still produces a clean reminder via the AI instead of
+  silently failing.
+
+**Duplicate confirmation.** The code was sending the reply *and* a second,
+separate mechanical "reminder set" line, concatenated together — that's why
+you saw two different-worded "okay"s back to back. Fixed: the reply itself
+(from either path) already confirms the task in natural language, so the
+mechanical line is now only used as a fallback if there's no reply text at
+all, never appended on top of one.
+
+Also added an explicit instruction against a different bug visible in your
+transcript: at one point the bot sent what looks like a raw image
+analysis/caption (the Ganesh Chaturthi card description) verbatim as its
+reply, completely disconnected from the conversation. The prompt now
+explicitly says media analysis is background context to react to
+naturally, never something to copy/forward as the reply itself.
