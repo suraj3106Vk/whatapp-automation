@@ -48,7 +48,6 @@ if [ ! -f .env ]; then
     printf 'GEMINI_API_KEYS=%s\n' "$GEMINI_KEYS"
     printf 'FIREBASE_PROJECT_ID=whtapp-automation\n'
     printf 'FIREBASE_ADMIN_EMAILS=%s\n' "$FIREBASE_ADMIN_EMAIL"
-    printf 'GOOGLE_APPLICATION_CREDENTIALS=%s/firebase-service-account.json\n' "$HOME"
   } > .env
   chmod 600 .env
 
@@ -68,7 +67,7 @@ set_env_value() {
   chmod 600 .env
 }
 
-sed -i '/^DASHBOARD_PASSWORD=/d; /^DASHBOARD_SESSION_SECRET=/d' .env
+sed -i '/^DASHBOARD_PASSWORD=/d; /^DASHBOARD_SESSION_SECRET=/d; /^GOOGLE_APPLICATION_CREDENTIALS=/d' .env
 chmod 600 .env
 
 FIREBASE_PROJECT_ID=$(sed -n 's/^FIREBASE_PROJECT_ID=//p' .env | tail -n 1)
@@ -87,19 +86,6 @@ if [ -z "$FIREBASE_ADMIN_EMAILS" ]; then
   fi
   set_env_value FIREBASE_ADMIN_EMAILS "$FIREBASE_ADMIN_EMAILS"
 fi
-
-GOOGLE_APPLICATION_CREDENTIALS=$(sed -n 's/^GOOGLE_APPLICATION_CREDENTIALS=//p' .env | tail -n 1)
-if [ -z "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
-  GOOGLE_APPLICATION_CREDENTIALS="$HOME/firebase-service-account.json"
-  set_env_value GOOGLE_APPLICATION_CREDENTIALS "$GOOGLE_APPLICATION_CREDENTIALS"
-fi
-
-if [ ! -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
-  printf 'Firebase service-account JSON is missing: %s\n' "$GOOGLE_APPLICATION_CREDENTIALS" >&2
-  printf '%s\n' 'Create it in Firebase Console > Project settings > Service accounts, download it to this path, then rerun the script.' >&2
-  exit 1
-fi
-chmod 600 "$GOOGLE_APPLICATION_CREDENTIALS"
 
 git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
 npm install --allow-git=all

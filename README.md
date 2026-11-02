@@ -47,11 +47,13 @@ Required provider configuration is `GROQ_API_KEYS` and/or `GEMINI_API_KEYS` as c
 
 Dashboard access uses Firebase email/password authentication. Set
 `FIREBASE_PROJECT_ID`, at least one of `FIREBASE_ADMIN_EMAILS` or
-`FIREBASE_ADMIN_UIDS`, and
-`GOOGLE_APPLICATION_CREDENTIALS` on the backend. The Admin SDK verifies ID
+`FIREBASE_ADMIN_UIDS` on the backend. The Admin SDK verifies ID
 tokens and allows only users with a verified email address whose email or
-Firebase UID is explicitly allowlisted. Keep the service-account JSON private
-and keep the backend behind HTTPS when it is reachable over the internet.
+Firebase UID is explicitly allowlisted. ID token signature verification uses
+Firebase's public signing certificates, so no service-account key is needed.
+Revocation checks are not performed; a token already issued can remain valid
+until it expires (usually within an hour). Keep the backend behind HTTPS when
+it is reachable over the internet.
 
 The dashboard frontend can be deployed to Netlify or Vercel. When the backend
 runs in Termux, set the hosting provider's `VITE_API_URL` build variable to the

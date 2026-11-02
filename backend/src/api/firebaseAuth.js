@@ -1,5 +1,3 @@
-const fs = require('fs');
-const path = require('path');
 const admin = require('firebase-admin');
 
 let firebaseConfig;
@@ -15,42 +13,19 @@ function getFirebaseConfig() {
     .split(',')
     .map(uid => uid.trim())
     .filter(Boolean);
-  const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS
-    ? path.resolve(process.env.GOOGLE_APPLICATION_CREDENTIALS)
-    : '';
-
   if (!projectId) throw new Error('FIREBASE_PROJECT_ID is required');
   if (!adminEmails.length && !adminUids.length) {
     throw new Error('Set at least one Firebase admin email or UID');
   }
-  if (!credentialsPath || !fs.existsSync(credentialsPath)) {
-    throw new Error('GOOGLE_APPLICATION_CREDENTIALS must point to the Firebase service-account JSON file');
-  }
 
-  let serviceAccount;
-  try {
-    serviceAccount = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
-  } catch (error) {
-    if (error instanceof SyntaxError) {
-      throw new Error('Firebase service-account file is not valid JSON');
-    }
-    throw error;
-  }
-  if (serviceAccount.project_id !== projectId) {
-    throw new Error('Firebase service-account project_id must match FIREBASE_PROJECT_ID');
-  }
-
-  firebaseConfig = { projectId, adminEmails, adminUids, serviceAccount };
+  firebaseConfig = { projectId, adminEmails, adminUids };
   return firebaseConfig;
 }
 
 function initializeFirebaseAdmin() {
-  const { projectId, serviceAccount } = getFirebaseConfig();
+  const { projectId } = getFirebaseConfig();
   if (!admin.apps.length) {
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-      projectId,
-    });
+    admin.initializeApp({ projectId });
   }
   return admin.app();
 }
@@ -70,7 +45,7 @@ function getBearerToken(req) {
 async function verifyFirebaseToken(token) {
   const { adminEmails, adminUids } = getFirebaseConfig();
   if (!admin.apps.length) initializeFirebaseAdmin();
-  const decodedToken = await admin.auth().verifyIdToken(token, true);
+  const decodedToken = await admin.auth().verifyIdToken(token);
   if (!isAuthorizedAdmin(decodedToken, adminEmails, adminUids)) {
     const error = new Error('Firebase user is not an authorized dashboard admin');
     error.status = 403;

@@ -1,7 +1,4 @@
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
 const test = require('node:test');
 
 const {
@@ -10,41 +7,28 @@ const {
   isAuthorizedAdmin,
 } = require('../src/api/firebaseAuth');
 
-test('Firebase admin config requires a matching service account and admin email', () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sk-firebase-'));
-  const credentialsPath = path.join(directory, 'service-account.json');
-  fs.writeFileSync(credentialsPath, JSON.stringify({
-    project_id: 'test-project',
-    client_email: 'admin@test-project.iam.gserviceaccount.com',
-    private_key: 'test-private-key',
-  }));
+test('Firebase token verification config requires project ID and an email or UID allowlist', () => {
   const previous = {
     projectId: process.env.FIREBASE_PROJECT_ID,
     adminEmails: process.env.FIREBASE_ADMIN_EMAILS,
     adminUids: process.env.FIREBASE_ADMIN_UIDS,
-    credentials: process.env.GOOGLE_APPLICATION_CREDENTIALS,
   };
 
   try {
     process.env.FIREBASE_PROJECT_ID = 'test-project';
     process.env.FIREBASE_ADMIN_EMAILS = 'Admin@Example.com';
     process.env.FIREBASE_ADMIN_UIDS = 'firebase-admin-uid';
-    process.env.GOOGLE_APPLICATION_CREDENTIALS = credentialsPath;
     const config = getFirebaseConfig();
     assert.equal(config.projectId, 'test-project');
     assert.deepEqual(config.adminEmails, ['admin@example.com']);
     assert.deepEqual(config.adminUids, ['firebase-admin-uid']);
-    assert.equal(config.serviceAccount.project_id, 'test-project');
   } finally {
-    fs.rmSync(directory, { recursive: true, force: true });
     if (previous.projectId === undefined) delete process.env.FIREBASE_PROJECT_ID;
     else process.env.FIREBASE_PROJECT_ID = previous.projectId;
     if (previous.adminEmails === undefined) delete process.env.FIREBASE_ADMIN_EMAILS;
     else process.env.FIREBASE_ADMIN_EMAILS = previous.adminEmails;
     if (previous.adminUids === undefined) delete process.env.FIREBASE_ADMIN_UIDS;
     else process.env.FIREBASE_ADMIN_UIDS = previous.adminUids;
-    if (previous.credentials === undefined) delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
-    else process.env.GOOGLE_APPLICATION_CREDENTIALS = previous.credentials;
   }
 });
 

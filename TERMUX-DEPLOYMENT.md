@@ -24,26 +24,18 @@ pkg update -y && pkg install -y nodejs-lts git openssl curl && if [ -d "$HOME/wh
    The backend requires Node.js 20 or newer.
 
 2. Before starting, in Firebase Console enable **Authentication → Sign-in
-   method → Email/Password**, create the admin user, and verify its email. In
-   **Project settings → Service accounts**, generate a private service-account
-   JSON key. Transfer it securely to Termux as
-   `$HOME/firebase-service-account.json`, then run:
-
-   ```sh
-   termux-setup-storage
-   cp "$HOME/storage/downloads/YOUR-SERVICE-ACCOUNT-FILENAME.json" "$HOME/firebase-service-account.json"
-   chmod 600 "$HOME/firebase-service-account.json"
-   ```
-
-   Never commit, upload, or share this service-account file. The Firebase web
-   API key in the frontend configuration is a public client identifier, not an
-   admin credential; restrict it to the Firebase APIs used by this app.
+   method → Email/Password**, create the admin user, and verify its email. No
+   service-account key is needed: the backend validates Firebase ID tokens
+   using Firebase's public signing certificates. Revocation checks are not
+   performed, so already-issued tokens may remain valid until they expire
+   (usually within an hour). The Firebase web API key in the frontend
+   configuration is a public client identifier, not an admin credential;
+   restrict it to the Firebase APIs used by this app.
 
 3. On first run, the script securely prompts for provider keys (input is
    hidden) and the admin's Firebase email, then stores configuration in a
-   private `backend/.env`. It requires the Firebase service-account file to
-   exist before the backend can start. If `.env` already exists, the script
-   adds missing Firebase settings without removing provider keys. Restarting
+   private `backend/.env`. If `.env` already exists, the script adds missing
+   Firebase settings without removing provider keys. Restarting
    the script runs `npm install` to pick up updated dependencies.
 
    On later runs, paste the same command again. It updates the checkout,
