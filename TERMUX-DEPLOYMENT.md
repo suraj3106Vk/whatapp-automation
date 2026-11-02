@@ -7,59 +7,40 @@ limits, so this is not as reliable as an always-on server.
 
 ## Install and start
 
-1. Install Termux from F-Droid (avoid outdated Play Store builds), open it, then
-   install Node.js and Git:
+Paste this into Termux to install prerequisites, get the latest project, and run
+the setup:
+
+```sh
+pkg update -y && pkg install -y nodejs-lts git openssl curl && if [ -d "$HOME/whatapp-automation/.git" ]; then cd "$HOME/whatapp-automation" && git pull --ff-only origin main; else git clone https://github.com/suraj3106Vk/whatapp-automation.git "$HOME/whatapp-automation"; fi && cd "$HOME/whatapp-automation" && sh termux-start.sh
+```
+
+1. Install Termux from F-Droid (avoid outdated Play Store builds), open it, and
+   verify Node.js is version 20 or newer:
 
    ```sh
-   pkg update
-   pkg install nodejs-lts git openssl curl
    node --version
    ```
 
    The backend requires Node.js 20 or newer.
 
-2. Clone the repository and install backend dependencies:
+2. On first run, the script securely prompts for provider keys (input is
+   hidden), generates a strong dashboard password and session secret, stores
+   them in a private `backend/.env`, and starts the backend. Save the displayed
+   dashboard credentials somewhere private. The supplied password has to be at
+   least 16 characters, so use the generated password. Keep `.env` private;
+   never commit or share it.
 
-   ```sh
-   cd "$HOME"
-   git clone https://github.com/suraj3106Vk/whatapp-automation.git
-   cd "$HOME/whatapp-automation/backend"
-   npm install
-   cp .env.example .env
-   nano .env
-   ```
+   On later runs, paste the same command again. It updates the checkout,
+   reuses the existing `.env` and persistent data directory, and starts the
+   backend without displaying credentials again.
 
-3. In `backend/.env`, set your AI provider key(s), owner details, and two
-   dashboard login secrets. Generate each secret separately:
-
-   ```sh
-   openssl rand -hex 32
-   openssl rand -hex 32
-   ```
-
-   Put one generated value in `DASHBOARD_PASSWORD` and the other in
-   `DASHBOARD_SESSION_SECRET`. Keep `.env` private; never commit or share it.
-   Also set `HOST=127.0.0.1` so only the local tunnel can connect to the backend.
-   The dashboard login token expires after seven days. It does not contain the
-   WhatsApp session, and signing in again does not require pairing WhatsApp.
-
-4. Create a persistent data directory outside the Git checkout and start the
-   backend:
-
-   ```sh
-   mkdir -p "$HOME/sk-agent-data"
-   cd "$HOME/whatapp-automation/backend"
-   DATA_PATH="$HOME/sk-agent-data" npm start
-   ```
-
-   Confirm it responds locally in another Termux session:
+3. Confirm the local health endpoint in another Termux session:
 
    ```sh
    curl http://127.0.0.1:3001/health
    ```
 
-   Keep using the same `DATA_PATH` value every time you start the backend. The
-   WhatsApp auth files are stored under
+   The WhatsApp auth files are stored under
    `$HOME/sk-agent-data/whatsapp-auth`; memory, scheduler data, and uploads are
    stored under the same persistent data directory.
 
