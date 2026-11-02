@@ -3,7 +3,7 @@ import { Routes, Route, NavLink } from 'react-router-dom'
 import {
   MessageSquare, Settings, FolderOpen, Activity, Bot, Wifi, WifiOff, LogOut, LockKeyhole
 } from 'lucide-react'
-import { onAuthStateChanged, sendEmailVerification, signInWithEmailAndPassword } from 'firebase/auth'
+import { onAuthStateChanged, signInWithEmailAndPassword } from 'firebase/auth'
 import { useSocket } from './hooks/useSocket'
 import {
   signOutDashboard,
@@ -27,17 +27,11 @@ function LoginScreen() {
     setBusy(true)
     try {
       if (!firebaseAuth) throw new Error('Firebase is not configured in the Netlify/Vercel environment.')
-      const credential = await signInWithEmailAndPassword(firebaseAuth, email.trim(), password)
-      if (!credential.user.emailVerified) {
-        await sendEmailVerification(credential.user)
-        await signOutDashboard()
-        setError(`Verification email sent to ${credential.user.email}. Open that email, click its verification link, then return here and sign in again. Check Spam if you don't see it.`)
-        return
-      }
+      await signInWithEmailAndPassword(firebaseAuth, email.trim(), password)
       await verifyDashboardSession()
     } catch (loginError) {
       if (loginError.response?.status === 403) {
-        setError('This email is not listed as a dashboard admin in the Termux backend.')
+        setError('This Firebase account is not allowlisted as a dashboard admin.')
       } else if (loginError.response) {
         setError(loginError.response.data?.error || 'The backend rejected this sign-in.')
       } else if (loginError.code === 'auth/invalid-credential' ||
@@ -117,7 +111,7 @@ export default function App() {
       setCheckingSession(false)
     } else {
       const unsubscribe = onAuthStateChanged(firebaseAuth, async user => {
-        if (!user || !user.emailVerified) {
+        if (!user) {
           setAuthenticated(false)
           setCheckingSession(false)
           return

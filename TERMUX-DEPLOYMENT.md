@@ -44,8 +44,7 @@ pkg update -y && pkg install -y nodejs-lts git openssl curl && if [ -d "$HOME/wh
 
    To allowlist a specific Firebase UID as well as (or instead of) an email,
    add `FIREBASE_ADMIN_UIDS=your-firebase-uid` to `backend/.env`. Multiple UIDs
-   can be comma-separated. The Firebase account must still have a verified
-   email address.
+   can be comma-separated. Exact UID matches do not require email verification.
 
 4. Confirm the local health endpoint in another Termux session:
 

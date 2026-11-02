@@ -32,9 +32,12 @@ function initializeFirebaseAdmin() {
 
 function isAuthorizedAdmin(decodedToken, adminEmails, adminUids = []) {
   const email = decodedToken?.email?.trim().toLowerCase();
-  return decodedToken?.email_verified === true &&
+  const isUidAllowlisted = Boolean(decodedToken?.uid) &&
+    adminUids.includes(decodedToken.uid);
+  const isVerifiedEmailAllowlisted = decodedToken?.email_verified === true &&
     Boolean(email) &&
-    (adminEmails.includes(email) || adminUids.includes(decodedToken?.uid));
+    adminEmails.includes(email);
+  return isUidAllowlisted || isVerifiedEmailAllowlisted;
 }
 
 function getBearerToken(req) {

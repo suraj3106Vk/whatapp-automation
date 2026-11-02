@@ -32,7 +32,7 @@ test('Firebase token verification config requires project ID and an email or UID
   }
 });
 
-test('only verified, allowlisted Firebase emails are dashboard admins', () => {
+test('Firebase admins are authorized by exact UID or verified allowlisted email', () => {
   const adminEmails = ['admin@example.com'];
   assert.equal(isAuthorizedAdmin({
     email: 'Admin@Example.com',
@@ -52,14 +52,17 @@ test('only verified, allowlisted Firebase emails are dashboard admins', () => {
     email_verified: true,
   }, [], ['firebase-admin-uid']), true);
   assert.equal(isAuthorizedAdmin({
-    uid: 'other-uid',
-    email: 'admin@example.com',
-    email_verified: true,
-  }, [], ['firebase-admin-uid']), false);
-  assert.equal(isAuthorizedAdmin({
     uid: 'firebase-admin-uid',
     email: 'admin@example.com',
     email_verified: false,
+  }, [], ['firebase-admin-uid']), true);
+  assert.equal(isAuthorizedAdmin({
+    uid: 'firebase-admin-uid',
+  }, [], ['firebase-admin-uid']), true);
+  assert.equal(isAuthorizedAdmin({
+    uid: 'other-uid',
+    email: 'admin@example.com',
+    email_verified: true,
   }, [], ['firebase-admin-uid']), false);
 });
 
