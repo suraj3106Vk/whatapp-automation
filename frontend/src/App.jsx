@@ -28,7 +28,10 @@ function LoginScreen({ onLogin }) {
       await loginDashboard(password)
       onLogin()
     } catch (loginError) {
-      setError(loginError.response?.data?.error || 'Could not connect to the backend.')
+      setError(
+        loginError.response?.data?.error ||
+        'Could not reach the backend. Set VITE_API_URL to the Termux HTTPS tunnel and redeploy the dashboard.'
+      )
     } finally {
       setBusy(false)
     }

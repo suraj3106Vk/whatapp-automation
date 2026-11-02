@@ -50,14 +50,17 @@ dashboard and Socket.IO connection require a signed session; the password is
 never included in the frontend build. Keep the backend behind HTTPS when it is
 reachable over the internet.
 
-For this deployment, Railway is the backend and Netlify is the frontend:
+The dashboard frontend can be deployed to Netlify or Vercel. When the backend
+runs in Termux, set the hosting provider's `VITE_API_URL` build variable to the
+backend's public HTTPS tunnel URL:
 
 ```text
-Railway API: https://whatapp-automation-production.up.railway.app
 Netlify app: https://whatappai.netlify.app
 ```
 
-The Netlify build already sets `VITE_API_URL` to the Railway API. Local development keeps using `http://localhost:3001` when that variable is not set.
+Do not point the deployed dashboard at an expired Railway URL. Local development
+uses `http://localhost:3001` when `VITE_API_URL` is not set. After changing
+`VITE_API_URL` in the hosting settings, trigger a new frontend deployment.
 
 Railway can use the root `Dockerfile`. Render can use `render.yaml`, but its free tier may sleep and therefore cannot guarantee a permanent WhatsApp WebSocket connection. No self-ping is used.
 
