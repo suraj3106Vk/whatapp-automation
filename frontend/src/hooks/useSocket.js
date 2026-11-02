@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { io } from 'socket.io-client'
-import { clearDashboardToken, getDashboardToken } from '../api/client'
+import { getDashboardToken, signOutDashboard } from '../api/client'
 
 // Local development socket connection
 const SOCKET_URL = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/+$/, '')
@@ -24,7 +24,9 @@ export function useSocket() {
       upgrade: true,                // Allow transport upgrades
       rememberUpgrade: true,        // Remember successful upgrade
       path: '/socket.io/',          // Explicit path
-      auth: { token: getDashboardToken() },
+      auth: async callback => {
+        callback({ token: await getDashboardToken() })
+      },
     })
     socketRef.current = socket
 
@@ -37,7 +39,7 @@ export function useSocket() {
       console.error('[Socket] Connection error:', error.message)
       setConnected(false)
       if (error.message === 'unauthorized') {
-        clearDashboardToken()
+        signOutDashboard()
         window.dispatchEvent(new Event('dashboard:unauthorized'))
       }
     })

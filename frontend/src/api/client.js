@@ -1,4 +1,6 @@
 import axios from 'axios'
+import { signOut } from 'firebase/auth'
+import { firebaseAuth } from '../config/firebase'
 
 // Local development API endpoint
 const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/+$/, '')
@@ -11,26 +13,18 @@ const api = axios.create({
   timeout: 15000,
 })
 
-const TOKEN_KEY = 'sk-agent-dashboard-session'
-
-export function getDashboardToken() {
-  return sessionStorage.getItem(TOKEN_KEY)
-}
-
-export function clearDashboardToken() {
-  sessionStorage.removeItem(TOKEN_KEY)
-}
-
-export async function loginDashboard(password) {
-  const { data } = await axios.post(`${BASE}/auth/login`, { password }, { timeout: 15000 })
-  sessionStorage.setItem(TOKEN_KEY, data.token)
-  return data
+export async function getDashboardToken() {
+  return firebaseAuth?.currentUser?.getIdToken() || ''
 }
 
 export const verifyDashboardSession = () => api.get('/auth/verify').then(r => r.data)
 
-api.interceptors.request.use((config) => {
-  const token = getDashboardToken()
+export function signOutDashboard() {
+  return firebaseAuth?.currentUser ? signOut(firebaseAuth) : Promise.resolve()
+}
+
+api.interceptors.request.use(async (config) => {
+  const token = await getDashboardToken()
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
@@ -39,7 +33,7 @@ api.interceptors.response.use(
   response => response,
   error => {
     if (error.response?.status === 401) {
-      clearDashboardToken()
+      signOutDashboard()
       window.dispatchEvent(new Event('dashboard:unauthorized'))
     }
     return Promise.reject(error)

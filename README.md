@@ -44,11 +44,12 @@ On startup the backend verifies that `/data` is writable and refuses to initiali
 
 Required provider configuration is `GROQ_API_KEYS` and/or `GEMINI_API_KEYS` as comma-separated values. Legacy single-key variables remain supported. Set `PORT` from the platform and keep `ENABLE_GROUPS=false` unless group handling is intentionally enabled.
 
-Set `DASHBOARD_PASSWORD` (at least 16 characters) and
-`DASHBOARD_SESSION_SECRET` (at least 32 bytes) before starting the backend. The
-dashboard and Socket.IO connection require a signed session; the password is
-never included in the frontend build. Keep the backend behind HTTPS when it is
-reachable over the internet.
+Dashboard access uses Firebase email/password authentication. Set
+`FIREBASE_PROJECT_ID`, `FIREBASE_ADMIN_EMAILS`, and
+`GOOGLE_APPLICATION_CREDENTIALS` on the backend. The Admin SDK verifies ID
+tokens and allows only verified email addresses listed in
+`FIREBASE_ADMIN_EMAILS`. Keep the service-account JSON private and keep the
+backend behind HTTPS when it is reachable over the internet.
 
 The dashboard frontend can be deployed to Netlify or Vercel. When the backend
 runs in Termux, set the hosting provider's `VITE_API_URL` build variable to the
@@ -67,7 +68,7 @@ Railway can use the root `Dockerfile`. Render can use `render.yaml`, but its fre
 ## API
 
 - `GET /health` returns uptime, WhatsApp state, scheduler state, and configured provider availability.
-- `POST /api/auth/login` exchanges the dashboard password for a seven-day session token. Other API and Socket.IO connections require that token.
+- `GET /api/auth/verify` verifies the Firebase ID token and admin allowlist. Other API and Socket.IO connections require that token.
 - `GET /api/status` returns dashboard-safe WhatsApp state, including the auth path, persistent-storage flag, and existing-session flag. It never returns credentials.
 - `GET /api/qr-page` shows pairing status while a QR is required.
 - `GET /api/files` lists files available to the agent.

@@ -23,19 +23,34 @@ pkg update -y && pkg install -y nodejs-lts git openssl curl && if [ -d "$HOME/wh
 
    The backend requires Node.js 20 or newer.
 
-2. On first run, the script securely prompts for provider keys (input is
-   hidden), generates a strong dashboard password and session secret, stores
-   them in a private `backend/.env`, and starts the backend. If `.env` already
-   exists but those dashboard credentials are missing or too short, the script
-   generates replacements while preserving the existing provider keys. Save
-   displayed credentials somewhere private. Keep `.env` private; never commit
-   or share it.
+2. Before starting, in Firebase Console enable **Authentication → Sign-in
+   method → Email/Password**, create the admin user, and verify its email. In
+   **Project settings → Service accounts**, generate a private service-account
+   JSON key. Transfer it securely to Termux as
+   `$HOME/firebase-service-account.json`, then run:
+
+   ```sh
+   termux-setup-storage
+   cp "$HOME/storage/downloads/YOUR-SERVICE-ACCOUNT-FILENAME.json" "$HOME/firebase-service-account.json"
+   chmod 600 "$HOME/firebase-service-account.json"
+   ```
+
+   Never commit, upload, or share this service-account file. The Firebase web
+   API key in the frontend configuration is a public client identifier, not an
+   admin credential; restrict it to the Firebase APIs used by this app.
+
+3. On first run, the script securely prompts for provider keys (input is
+   hidden) and the admin's Firebase email, then stores configuration in a
+   private `backend/.env`. It requires the Firebase service-account file to
+   exist before the backend can start. If `.env` already exists, the script
+   adds missing Firebase settings without removing provider keys. Restarting
+   the script runs `npm install` to pick up updated dependencies.
 
    On later runs, paste the same command again. It updates the checkout,
    reuses the existing `.env` and persistent data directory, and starts the
    backend without displaying credentials again.
 
-3. Confirm the local health endpoint in another Termux session:
+4. Confirm the local health endpoint in another Termux session:
 
    ```sh
    curl http://127.0.0.1:3001/health
@@ -61,12 +76,16 @@ Termux.
 
 ## Connect the hosted dashboard from anywhere
 
-The backend API is protected by the dashboard password, but it must still be
+The backend API is protected by Firebase authentication and the configured
+admin email allowlist, but it must still be
 served over HTTPS when accessed remotely. Do not expose port 3001 directly to
 the public internet. Set up a persistent HTTPS tunnel to
 `http://127.0.0.1:3001` using a provider such as Cloudflare Tunnel, and use its
-stable HTTPS hostname as the Netlify site's `VITE_API_URL`. Trigger a Netlify
-redeploy after changing that variable. If you use a custom frontend domain,
+stable HTTPS hostname as the Netlify/Vercel `VITE_API_URL`. If using Vercel,
+also set `VITE_API_URL` in the project environment variables. Trigger a
+redeploy after changing that variable. In Firebase Console → Authentication →
+Settings → Authorized domains, add the Netlify/Vercel frontend hostnames. If
+you use a custom frontend domain,
 also set `FRONTEND_URL` in `backend/.env` to that exact origin and restart the
 backend.
 
@@ -77,8 +96,9 @@ allow Termux to run without battery optimization. A Termux wake lock can reduce
 sleep-related interruptions, but Android may still stop background work.
 
 After the tunnel and dashboard are configured, open the dashboard on another
-device, enter the `DASHBOARD_PASSWORD`, then use the QR shown by the dashboard
-to pair the WhatsApp account on the phone.
+device and sign in with the verified Firebase admin email and password. Create
+the admin user in Firebase Console; this app does not expose public sign-up.
+Then use the QR shown by the dashboard to pair WhatsApp once.
 
 ## Session safety
 

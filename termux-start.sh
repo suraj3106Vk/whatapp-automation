@@ -29,8 +29,13 @@ if [ ! -f .env ]; then
     exit 1
   fi
 
-  DASHBOARD_PASSWORD=$(openssl rand -hex 16)
-  DASHBOARD_SESSION_SECRET=$(openssl rand -hex 32)
+  printf '%s' 'Firebase admin email (create and verify this user in Firebase Console): '
+  IFS= read -r FIREBASE_ADMIN_EMAIL
+  if [ -z "$FIREBASE_ADMIN_EMAIL" ]; then
+    printf '%s\n' 'A Firebase admin email is required.' >&2
+    exit 1
+  fi
+
   umask 077
   {
     printf 'PORT=3001\n'
@@ -41,47 +46,63 @@ if [ ! -f .env ]; then
     printf 'DATA_PATH=%s/sk-agent-data\n' "$HOME"
     printf 'GROQ_API_KEYS=%s\n' "$GROQ_KEYS"
     printf 'GEMINI_API_KEYS=%s\n' "$GEMINI_KEYS"
-    printf 'DASHBOARD_PASSWORD=%s\n' "$DASHBOARD_PASSWORD"
-    printf 'DASHBOARD_SESSION_SECRET=%s\n' "$DASHBOARD_SESSION_SECRET"
+    printf 'FIREBASE_PROJECT_ID=whtapp-automation\n'
+    printf 'FIREBASE_ADMIN_EMAILS=%s\n' "$FIREBASE_ADMIN_EMAIL"
+    printf 'GOOGLE_APPLICATION_CREDENTIALS=%s/firebase-service-account.json\n' "$HOME"
   } > .env
   chmod 600 .env
 
-  printf '\n%s\n' 'Save these dashboard credentials somewhere private. They are only shown during this setup:'
-  printf 'Dashboard password: %s\n' "$DASHBOARD_PASSWORD"
-  printf 'Dashboard session secret: %s\n\n' "$DASHBOARD_SESSION_SECRET"
-  unset GROQ_KEYS GEMINI_KEYS DASHBOARD_PASSWORD DASHBOARD_SESSION_SECRET
+  unset GROQ_KEYS GEMINI_KEYS FIREBASE_ADMIN_EMAIL
 else
   printf '%s\n' 'Using the existing backend/.env; secrets will not be displayed.'
 fi
 
-CURRENT_PASSWORD=$(sed -n 's/^DASHBOARD_PASSWORD=//p' .env | tail -n 1)
-CURRENT_SESSION_SECRET=$(sed -n 's/^DASHBOARD_SESSION_SECRET=//p' .env | tail -n 1)
-if [ "${#CURRENT_PASSWORD}" -lt 16 ] || [ "${#CURRENT_SESSION_SECRET}" -lt 32 ]; then
-  DASHBOARD_PASSWORD=$(openssl rand -hex 16)
-  DASHBOARD_SESSION_SECRET=$(openssl rand -hex 32)
-  UPDATED_ENV=$(mktemp)
-  awk '
-    !/^[[:space:]]*DASHBOARD_PASSWORD=/ &&
-    !/^[[:space:]]*DASHBOARD_SESSION_SECRET=/
-  ' .env > "$UPDATED_ENV"
-  {
-    printf '\nDASHBOARD_PASSWORD=%s\n' "$DASHBOARD_PASSWORD"
-    printf 'DASHBOARD_SESSION_SECRET=%s\n' "$DASHBOARD_SESSION_SECRET"
-  } >> "$UPDATED_ENV"
-  cat "$UPDATED_ENV" > .env
-  rm "$UPDATED_ENV"
+set_env_value() {
+  key=$1
+  value=$2
+  updated_env=$(mktemp)
+  awk -v key="$key" 'index($0, key "=") != 1' .env > "$updated_env"
+  printf '%s=%s\n' "$key" "$value" >> "$updated_env"
+  cat "$updated_env" > .env
+  rm "$updated_env"
   chmod 600 .env
-  printf '\n%s\n' 'Generated dashboard credentials; save them somewhere private:'
-  printf 'Dashboard password: %s\n' "$DASHBOARD_PASSWORD"
-  printf 'Dashboard session secret: %s\n\n' "$DASHBOARD_SESSION_SECRET"
-  unset CURRENT_PASSWORD CURRENT_SESSION_SECRET DASHBOARD_PASSWORD DASHBOARD_SESSION_SECRET
-else
-  unset CURRENT_PASSWORD CURRENT_SESSION_SECRET
+}
+
+sed -i '/^DASHBOARD_PASSWORD=/d; /^DASHBOARD_SESSION_SECRET=/d' .env
+chmod 600 .env
+
+FIREBASE_PROJECT_ID=$(sed -n 's/^FIREBASE_PROJECT_ID=//p' .env | tail -n 1)
+if [ -z "$FIREBASE_PROJECT_ID" ]; then
+  FIREBASE_PROJECT_ID=whtapp-automation
+  set_env_value FIREBASE_PROJECT_ID "$FIREBASE_PROJECT_ID"
 fi
 
-if [ ! -d node_modules ]; then
-  npm install
+FIREBASE_ADMIN_EMAILS=$(sed -n 's/^FIREBASE_ADMIN_EMAILS=//p' .env | tail -n 1)
+if [ -z "$FIREBASE_ADMIN_EMAILS" ]; then
+  printf '%s' 'Firebase admin email (create and verify this user in Firebase Console): '
+  IFS= read -r FIREBASE_ADMIN_EMAILS
+  if [ -z "$FIREBASE_ADMIN_EMAILS" ]; then
+    printf '%s\n' 'A Firebase admin email is required.' >&2
+    exit 1
+  fi
+  set_env_value FIREBASE_ADMIN_EMAILS "$FIREBASE_ADMIN_EMAILS"
 fi
+
+GOOGLE_APPLICATION_CREDENTIALS=$(sed -n 's/^GOOGLE_APPLICATION_CREDENTIALS=//p' .env | tail -n 1)
+if [ -z "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
+  GOOGLE_APPLICATION_CREDENTIALS="$HOME/firebase-service-account.json"
+  set_env_value GOOGLE_APPLICATION_CREDENTIALS "$GOOGLE_APPLICATION_CREDENTIALS"
+fi
+
+if [ ! -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
+  printf 'Firebase service-account JSON is missing: %s\n' "$GOOGLE_APPLICATION_CREDENTIALS" >&2
+  printf '%s\n' 'Create it in Firebase Console > Project settings > Service accounts, download it to this path, then rerun the script.' >&2
+  exit 1
+fi
+chmod 600 "$GOOGLE_APPLICATION_CREDENTIALS"
+
+git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+npm install --allow-git=all
 
 mkdir -p "$HOME/sk-agent-data"
 printf 'Persistent WhatsApp session/data directory: %s/sk-agent-data\n' "$HOME"

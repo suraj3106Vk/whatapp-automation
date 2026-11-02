@@ -7,7 +7,6 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-const path = require('path');
 
 const whatsapp = require('./whatsapp/client');
 const memory = require('./memory/conversationMemory');
@@ -15,13 +14,10 @@ const fileManager = require('./files/fileManager');
 const scheduler = require('./agent/taskScheduler');
 const routes = require('./api/routes');
 const {
-  createLoginRateLimiter,
-  createSessionToken,
-  isValidSessionToken,
   requireDashboardAuth,
-  validateAuthConfig,
-  verifyPassword,
-} = require('./api/dashboardAuth');
+  initializeFirebaseAdmin,
+  verifyFirebaseToken,
+} = require('./api/firebaseAuth');
 const { getUploadsPath, verifyPersistentStorage } = require('./config/storage');
 
 const PORT = process.env.PORT || 3001;
@@ -57,7 +53,6 @@ const corsOptions = {
 
 const app = express();
 const server = http.createServer(app);
-const loginRateLimiter = createLoginRateLimiter();
 app.set('trust proxy', 'loopback');
 
 const io = new Server(server, {
@@ -73,13 +68,16 @@ const io = new Server(server, {
   allowEIO3: true,           // Support older clients
 });
 
-io.use((socket, next) => {
+io.use(async (socket, next) => {
   try {
-    if (isValidSessionToken(socket.handshake.auth?.token)) return next();
+    socket.data.firebaseUser = await verifyFirebaseToken(socket.handshake.auth?.token);
+    return next();
   } catch (error) {
-    return next(error);
+    if (error.status !== 403 && !error.code?.startsWith('auth/')) {
+      console.error('[Socket.IO] Firebase token verification failed:', error.message);
+    }
+    return next(new Error(error.status === 403 ? 'forbidden' : 'unauthorized'));
   }
-  return next(new Error('unauthorized'));
 });
 
 io.on('connection', (socket) => {
@@ -95,16 +93,8 @@ io.on('connection', (socket) => {
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
-app.post('/api/auth/login', loginRateLimiter, (req, res) => {
-  if (!verifyPassword(req.body?.password)) {
-    req.recordDashboardLoginFailure();
-    return res.status(401).json({ success: false, error: 'Invalid password' });
-  }
-  req.clearDashboardLoginFailures();
-  return res.json({ success: true, token: createSessionToken() });
-});
 app.get('/api/auth/verify', requireDashboardAuth, (req, res) => {
-  res.json({ success: true, authenticated: true });
+  res.json({ success: true, authenticated: true, email: req.firebaseUser.email });
 });
 app.use('/api', requireDashboardAuth);
 app.use('/uploads', requireDashboardAuth, express.static(getUploadsPath()));
@@ -128,7 +118,7 @@ async function start() {
   console.log('║       SK Agent - WhatsApp Bot          ║');
   console.log('╚════════════════════════════════════════╝\n');
 
-  validateAuthConfig();
+  initializeFirebaseAdmin();
   await verifyPersistentStorage();
   await memory.init();
   console.log('[Server] Memory initialized');
