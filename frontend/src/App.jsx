@@ -40,8 +40,10 @@ function LoginScreen() {
         setError('Email or password is incorrect.')
       } else if (loginError.code?.startsWith('auth/')) {
         setError(loginError.message)
+      } else if (!loginError.response) {
+        setError('Backend is unreachable. Set Netlify VITE_API_URL to your live Termux HTTPS tunnel URL, then redeploy the site.')
       } else {
-        setError(loginError.message || 'Could not reach the backend. Check the HTTPS tunnel and VITE_API_URL.')
+        setError(loginError.message || 'The backend rejected the sign-in.')
       }
     } finally {
       setBusy(false)

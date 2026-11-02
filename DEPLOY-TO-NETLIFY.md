@@ -2,6 +2,11 @@
 
 Your frontend is ready to deploy! Follow these steps to publish it on Netlify.
 
+> **If the backend runs in Termux:** Ignore any older Railway URL in this guide.
+> Set `VITE_API_URL` to the public HTTPS URL of your live tunnel to the Termux
+> backend, then trigger a new Netlify deployment. See
+> [TERMUX-DEPLOYMENT.md](./TERMUX-DEPLOYMENT.md) for backend and tunnel setup.
+
 ---
 
 ## 📋 Quick Deploy (5 Minutes)
@@ -35,7 +40,7 @@ Before deploying, click **"Add environment variables"**:
 
 ```
 Key:   VITE_API_URL
-Value: https://whatapp-automation-production.up.railway.app
+Value: https://YOUR-LIVE-TERMUX-HTTPS-TUNNEL
 ```
 
 ### Step 5: Deploy!
@@ -76,23 +81,23 @@ Want a custom domain like `bot.yourdomain.com`?
 
 ## 🔧 Troubleshooting
 
-### Dashboard Shows "Backend Disconnected"?
+### Dashboard Shows "Backend is unreachable" or "Backend Disconnected"?
 
-1. Check Railway backend is running (should show "Active" in Railway dashboard)
-2. Verify environment variable in Netlify:
+1. Confirm the Termux backend and its HTTPS tunnel are running.
+2. Verify Netlify's environment variable:
    - Go to **Site Settings** → **Environment variables**
-   - Make sure `VITE_API_URL` = `https://whatapp-automation-production.up.railway.app`
+   - Set `VITE_API_URL` to the tunnel's public HTTPS URL (not the expired Railway URL)
 3. **Redeploy:** Deploys → Trigger deploy → Deploy site
 
 ### QR Code Not Showing?
 
-- Railway backend might still be starting (wait 1-2 minutes)
-- Check Railway logs for errors
-- Make sure Railway domain is accessible (use DNS fix script if needed)
+- Make sure the Termux backend is running and paired
+- Open the tunnel URL followed by `/health`; it should return JSON
+- Ensure `VITE_API_URL` has no trailing slash, then redeploy Netlify
 
 ### Need to Reconnect WhatsApp?
 
-1. In Railway dashboard, click **"Restart"** on your service
+1. Restart the backend in Termux
 2. Wait for QR code to appear on Netlify dashboard
 3. Scan new QR code
 
@@ -114,7 +119,7 @@ Once deployed, you can:
 ```
 ┌─────────────────────────────────────────┐
 │  Frontend: Netlify (Public Dashboard)  │
-│  URL: https://yoursite.netlify.app     │
+│  Backend: Termux → persistent HTTPS tunnel │
 └─────────────────┬───────────────────────┘
                   │
                   │ HTTPS Connection
