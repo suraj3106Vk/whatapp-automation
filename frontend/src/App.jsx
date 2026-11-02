@@ -1,15 +1,106 @@
 import React from 'react'
 import { Routes, Route, NavLink } from 'react-router-dom'
 import {
-  MessageSquare, Settings, FolderOpen, Activity, Bot, Wifi, WifiOff
+  MessageSquare, Settings, FolderOpen, Activity, Bot, Wifi, WifiOff, LogOut, LockKeyhole
 } from 'lucide-react'
 import { useSocket } from './hooks/useSocket'
+import {
+  clearDashboardToken,
+  getDashboardToken,
+  loginDashboard,
+  verifyDashboardSession,
+} from './api/client'
 import Dashboard from './pages/Dashboard'
 import MessagesPage from './pages/MessagesPage'
 import FilesPage from './pages/FilesPage'
 import SettingsPage from './pages/SettingsPage'
 
+function LoginScreen({ onLogin }) {
+  const [password, setPassword] = React.useState('')
+  const [error, setError] = React.useState('')
+  const [busy, setBusy] = React.useState(false)
+
+  async function handleSubmit(event) {
+    event.preventDefault()
+    setError('')
+    setBusy(true)
+    try {
+      await loginDashboard(password)
+      onLogin()
+    } catch (loginError) {
+      setError(loginError.response?.data?.error || 'Could not connect to the backend.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
+      <form onSubmit={handleSubmit} className="w-full max-w-sm bg-gray-900 border border-gray-800 rounded-2xl p-7 space-y-5">
+        <div className="text-center">
+          <div className="w-12 h-12 mx-auto rounded-xl bg-whatsapp-green flex items-center justify-center">
+            <LockKeyhole size={23} className="text-white" />
+          </div>
+          <h1 className="mt-4 text-xl font-bold text-white">SK Agent Sign In</h1>
+          <p className="mt-1 text-sm text-gray-400">Enter your dashboard password to continue.</p>
+        </div>
+        <div>
+          <label htmlFor="dashboard-password" className="block text-sm text-gray-300 mb-2">Dashboard password</label>
+          <input
+            id="dashboard-password"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={event => setPassword(event.target.value)}
+            required
+            className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white outline-none focus:border-whatsapp-green"
+          />
+        </div>
+        {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
+        <button type="submit" disabled={busy || !password} className="btn-primary w-full disabled:opacity-50">
+          {busy ? 'Signing in...' : 'Sign in'}
+        </button>
+      </form>
+    </div>
+  )
+}
+
 export default function App() {
+  const [authenticated, setAuthenticated] = React.useState(false)
+  const [checkingSession, setCheckingSession] = React.useState(true)
+
+  React.useEffect(() => {
+    let active = true
+    const expireSession = () => {
+      clearDashboardToken()
+      setAuthenticated(false)
+      setCheckingSession(false)
+    }
+    window.addEventListener('dashboard:unauthorized', expireSession)
+
+    if (!getDashboardToken()) {
+      setCheckingSession(false)
+    } else {
+      verifyDashboardSession()
+        .then(() => { if (active) setAuthenticated(true) })
+        .catch(() => { if (active) clearDashboardToken() })
+        .finally(() => { if (active) setCheckingSession(false) })
+    }
+
+    return () => {
+      active = false
+      window.removeEventListener('dashboard:unauthorized', expireSession)
+    }
+  }, [])
+
+  if (checkingSession) {
+    return <div className="min-h-screen bg-gray-950 flex items-center justify-center text-gray-400">Checking dashboard session...</div>
+  }
+  if (!authenticated) return <LoginScreen onLogin={() => setAuthenticated(true)} />
+  return <DashboardApp onSignOut={() => { clearDashboardToken(); setAuthenticated(false) }} />
+}
+
+function DashboardApp({ onSignOut }) {
   const { connected, status } = useSocket()
 
   const stateColor = {
@@ -86,6 +177,9 @@ export default function App() {
         {/* Footer */}
         <div className="p-4 border-t border-gray-800">
           <p className="text-xs text-gray-600 text-center">SK Agent v1.0 · Local</p>
+          <button onClick={onSignOut} className="mt-3 w-full flex items-center justify-center gap-2 text-xs text-gray-400 hover:text-white">
+            <LogOut size={14} /> Sign out
+          </button>
         </div>
       </aside>
 

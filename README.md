@@ -21,6 +21,12 @@ docker compose up -d --build
 
 The Compose file mounts `./data` to `/data`, preserving WhatsApp auth and application state across restarts.
 
+## Android Termux
+
+To run the backend on an Android phone and keep WhatsApp authentication across
+restarts, follow [TERMUX-DEPLOYMENT.md](./TERMUX-DEPLOYMENT.md). Dashboard access
+requires the configured password; remote access must use an HTTPS tunnel.
+
 ## Deployment
 
 Use a single persistent Railway service with one replica. Add a Railway Volume mounted at `/data` on the same backend service that runs WhatsApp. Set:
@@ -38,6 +44,12 @@ On startup the backend verifies that `/data` is writable and refuses to initiali
 
 Required provider configuration is `GROQ_API_KEYS` and/or `GEMINI_API_KEYS` as comma-separated values. Legacy single-key variables remain supported. Set `PORT` from the platform and keep `ENABLE_GROUPS=false` unless group handling is intentionally enabled.
 
+Set `DASHBOARD_PASSWORD` (at least 16 characters) and
+`DASHBOARD_SESSION_SECRET` (at least 32 bytes) before starting the backend. The
+dashboard and Socket.IO connection require a signed session; the password is
+never included in the frontend build. Keep the backend behind HTTPS when it is
+reachable over the internet.
+
 For this deployment, Railway is the backend and Netlify is the frontend:
 
 ```text
@@ -52,6 +64,7 @@ Railway can use the root `Dockerfile`. Render can use `render.yaml`, but its fre
 ## API
 
 - `GET /health` returns uptime, WhatsApp state, scheduler state, and configured provider availability.
+- `POST /api/auth/login` exchanges the dashboard password for a seven-day session token. Other API and Socket.IO connections require that token.
 - `GET /api/status` returns dashboard-safe WhatsApp state, including the auth path, persistent-storage flag, and existing-session flag. It never returns credentials.
 - `GET /api/qr-page` shows pairing status while a QR is required.
 - `GET /api/files` lists files available to the agent.

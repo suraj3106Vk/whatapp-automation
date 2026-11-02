@@ -14,6 +14,14 @@ const memory = require('./memory/conversationMemory');
 const fileManager = require('./files/fileManager');
 const scheduler = require('./agent/taskScheduler');
 const routes = require('./api/routes');
+const {
+  createLoginRateLimiter,
+  createSessionToken,
+  isValidSessionToken,
+  requireDashboardAuth,
+  validateAuthConfig,
+  verifyPassword,
+} = require('./api/dashboardAuth');
 const { getUploadsPath, verifyPersistentStorage } = require('./config/storage');
 
 const PORT = process.env.PORT || 3001;
@@ -49,6 +57,8 @@ const corsOptions = {
 
 const app = express();
 const server = http.createServer(app);
+const loginRateLimiter = createLoginRateLimiter();
+app.set('trust proxy', 'loopback');
 
 const io = new Server(server, {
   cors: {
@@ -61,6 +71,15 @@ const io = new Server(server, {
   connectTimeout: 45000,     // Initial connection timeout
   transports: ['websocket', 'polling'],  // Try websocket first, fallback to polling
   allowEIO3: true,           // Support older clients
+});
+
+io.use((socket, next) => {
+  try {
+    if (isValidSessionToken(socket.handshake.auth?.token)) return next();
+  } catch (error) {
+    return next(error);
+  }
+  return next(new Error('unauthorized'));
 });
 
 io.on('connection', (socket) => {
@@ -76,7 +95,19 @@ io.on('connection', (socket) => {
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
-app.use('/uploads', express.static(getUploadsPath()));
+app.post('/api/auth/login', loginRateLimiter, (req, res) => {
+  if (!verifyPassword(req.body?.password)) {
+    req.recordDashboardLoginFailure();
+    return res.status(401).json({ success: false, error: 'Invalid password' });
+  }
+  req.clearDashboardLoginFailures();
+  return res.json({ success: true, token: createSessionToken() });
+});
+app.get('/api/auth/verify', requireDashboardAuth, (req, res) => {
+  res.json({ success: true, authenticated: true });
+});
+app.use('/api', requireDashboardAuth);
+app.use('/uploads', requireDashboardAuth, express.static(getUploadsPath()));
 app.use('/api', routes);
 app.get('/health', (req, res) => {
   const whatsappState = whatsapp.getState();
@@ -97,6 +128,7 @@ async function start() {
   console.log('║       SK Agent - WhatsApp Bot          ║');
   console.log('╚════════════════════════════════════════╝\n');
 
+  validateAuthConfig();
   await verifyPersistentStorage();
   await memory.init();
   console.log('[Server] Memory initialized');
@@ -145,4 +177,3 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('Reason:', reason);
   // Don't exit - try to recover
 });
-

@@ -413,6 +413,18 @@ router.get('/files', async (req, res) => {
   }
 });
 
+router.get('/files/download/:filename', (req, res) => {
+  const filename = path.basename(req.params.filename);
+  if (filename !== req.params.filename) {
+    return res.status(400).json({ success: false, error: 'Invalid filename' });
+  }
+  const filePath = path.join(fileManager.UPLOADS_DIR, filename);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ success: false, error: 'File not found' });
+  }
+  return res.download(filePath, filename);
+});
+
 // ── Browse PC folders (local file access) ──
 router.get('/browse-folder', async (req, res) => {
   const { folder } = req.query;

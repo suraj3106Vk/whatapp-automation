@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Upload, Trash2, File, Image, FileText, Download, RefreshCw } from 'lucide-react'
-import { getFiles, uploadFile, deleteFile } from '../api/client'
+import { getFiles, uploadFile, deleteFile, downloadFile } from '../api/client'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
 
@@ -59,6 +59,20 @@ export default function FilesPage() {
       setFiles(prev => prev.filter(f => f.name !== filename))
     } catch {
       toast.error('Delete failed')
+    }
+  }
+
+  async function handleDownload(filename) {
+    try {
+      const blob = await downloadFile(filename)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename
+      link.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch {
+      toast.error('Download failed')
     }
   }
 
@@ -139,15 +153,13 @@ export default function FilesPage() {
                   </p>
                 </div>
                 <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <a
-                    href={`/uploads/${encodeURIComponent(f.name)}`}
-                    target="_blank"
-                    rel="noreferrer"
+                  <button
+                    onClick={() => handleDownload(f.name)}
                     className="p-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg"
-                    title="Preview"
+                    title="Download"
                   >
                     <Download size={14} className="text-gray-300" />
-                  </a>
+                  </button>
                   <button
                     onClick={() => handleDelete(f.name)}
                     className="p-1.5 bg-red-900/40 hover:bg-red-800 rounded-lg"
