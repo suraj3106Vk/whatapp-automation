@@ -31,7 +31,7 @@ function LoginScreen() {
       if (!credential.user.emailVerified) {
         await sendEmailVerification(credential.user)
         await signOutDashboard()
-        setError('Verify your email using the link Firebase sent, then sign in again.')
+        setError(`Verification email sent to ${credential.user.email}. Open that email, click its verification link, then return here and sign in again. Check Spam if you don't see it.`)
         return
       }
       await verifyDashboardSession()
