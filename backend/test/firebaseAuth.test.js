@@ -21,16 +21,19 @@ test('Firebase admin config requires a matching service account and admin email'
   const previous = {
     projectId: process.env.FIREBASE_PROJECT_ID,
     adminEmails: process.env.FIREBASE_ADMIN_EMAILS,
+    adminUids: process.env.FIREBASE_ADMIN_UIDS,
     credentials: process.env.GOOGLE_APPLICATION_CREDENTIALS,
   };
 
   try {
     process.env.FIREBASE_PROJECT_ID = 'test-project';
     process.env.FIREBASE_ADMIN_EMAILS = 'Admin@Example.com';
+    process.env.FIREBASE_ADMIN_UIDS = 'firebase-admin-uid';
     process.env.GOOGLE_APPLICATION_CREDENTIALS = credentialsPath;
     const config = getFirebaseConfig();
     assert.equal(config.projectId, 'test-project');
     assert.deepEqual(config.adminEmails, ['admin@example.com']);
+    assert.deepEqual(config.adminUids, ['firebase-admin-uid']);
     assert.equal(config.serviceAccount.project_id, 'test-project');
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
@@ -38,6 +41,8 @@ test('Firebase admin config requires a matching service account and admin email'
     else process.env.FIREBASE_PROJECT_ID = previous.projectId;
     if (previous.adminEmails === undefined) delete process.env.FIREBASE_ADMIN_EMAILS;
     else process.env.FIREBASE_ADMIN_EMAILS = previous.adminEmails;
+    if (previous.adminUids === undefined) delete process.env.FIREBASE_ADMIN_UIDS;
+    else process.env.FIREBASE_ADMIN_UIDS = previous.adminUids;
     if (previous.credentials === undefined) delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
     else process.env.GOOGLE_APPLICATION_CREDENTIALS = previous.credentials;
   }
@@ -57,6 +62,21 @@ test('only verified, allowlisted Firebase emails are dashboard admins', () => {
     email: 'other@example.com',
     email_verified: true,
   }, adminEmails), false);
+  assert.equal(isAuthorizedAdmin({
+    uid: 'firebase-admin-uid',
+    email: 'admin@example.com',
+    email_verified: true,
+  }, [], ['firebase-admin-uid']), true);
+  assert.equal(isAuthorizedAdmin({
+    uid: 'other-uid',
+    email: 'admin@example.com',
+    email_verified: true,
+  }, [], ['firebase-admin-uid']), false);
+  assert.equal(isAuthorizedAdmin({
+    uid: 'firebase-admin-uid',
+    email: 'admin@example.com',
+    email_verified: false,
+  }, [], ['firebase-admin-uid']), false);
 });
 
 test('bearer token extraction rejects missing or malformed authorization', () => {

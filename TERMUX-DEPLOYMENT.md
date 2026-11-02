@@ -50,6 +50,11 @@ pkg update -y && pkg install -y nodejs-lts git openssl curl && if [ -d "$HOME/wh
    reuses the existing `.env` and persistent data directory, and starts the
    backend without displaying credentials again.
 
+   To allowlist a specific Firebase UID as well as (or instead of) an email,
+   add `FIREBASE_ADMIN_UIDS=your-firebase-uid` to `backend/.env`. Multiple UIDs
+   can be comma-separated. The Firebase account must still have a verified
+   email address.
+
 4. Confirm the local health endpoint in another Termux session:
 
    ```sh

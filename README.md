@@ -25,7 +25,8 @@ The Compose file mounts `./data` to `/data`, preserving WhatsApp auth and applic
 
 To run the backend on an Android phone and keep WhatsApp authentication across
 restarts, follow [TERMUX-DEPLOYMENT.md](./TERMUX-DEPLOYMENT.md). Dashboard access
-requires the configured password; remote access must use an HTTPS tunnel.
+uses Firebase authentication and an admin email or UID allowlist; remote access
+must use an HTTPS tunnel.
 
 ## Deployment
 
@@ -45,11 +46,12 @@ On startup the backend verifies that `/data` is writable and refuses to initiali
 Required provider configuration is `GROQ_API_KEYS` and/or `GEMINI_API_KEYS` as comma-separated values. Legacy single-key variables remain supported. Set `PORT` from the platform and keep `ENABLE_GROUPS=false` unless group handling is intentionally enabled.
 
 Dashboard access uses Firebase email/password authentication. Set
-`FIREBASE_PROJECT_ID`, `FIREBASE_ADMIN_EMAILS`, and
+`FIREBASE_PROJECT_ID`, at least one of `FIREBASE_ADMIN_EMAILS` or
+`FIREBASE_ADMIN_UIDS`, and
 `GOOGLE_APPLICATION_CREDENTIALS` on the backend. The Admin SDK verifies ID
-tokens and allows only verified email addresses listed in
-`FIREBASE_ADMIN_EMAILS`. Keep the service-account JSON private and keep the
-backend behind HTTPS when it is reachable over the internet.
+tokens and allows only users with a verified email address whose email or
+Firebase UID is explicitly allowlisted. Keep the service-account JSON private
+and keep the backend behind HTTPS when it is reachable over the internet.
 
 The dashboard frontend can be deployed to Netlify or Vercel. When the backend
 runs in Termux, set the hosting provider's `VITE_API_URL` build variable to the
