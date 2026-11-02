@@ -25,10 +25,11 @@ pkg update -y && pkg install -y nodejs-lts git openssl curl && if [ -d "$HOME/wh
 
 2. On first run, the script securely prompts for provider keys (input is
    hidden), generates a strong dashboard password and session secret, stores
-   them in a private `backend/.env`, and starts the backend. Save the displayed
-   dashboard credentials somewhere private. The supplied password has to be at
-   least 16 characters, so use the generated password. Keep `.env` private;
-   never commit or share it.
+   them in a private `backend/.env`, and starts the backend. If `.env` already
+   exists but those dashboard credentials are missing or too short, the script
+   generates replacements while preserving the existing provider keys. Save
+   displayed credentials somewhere private. Keep `.env` private; never commit
+   or share it.
 
    On later runs, paste the same command again. It updates the checkout,
    reuses the existing `.env` and persistent data directory, and starts the

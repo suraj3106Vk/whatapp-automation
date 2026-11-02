@@ -54,6 +54,31 @@ else
   printf '%s\n' 'Using the existing backend/.env; secrets will not be displayed.'
 fi
 
+CURRENT_PASSWORD=$(sed -n 's/^DASHBOARD_PASSWORD=//p' .env | tail -n 1)
+CURRENT_SESSION_SECRET=$(sed -n 's/^DASHBOARD_SESSION_SECRET=//p' .env | tail -n 1)
+if [ "${#CURRENT_PASSWORD}" -lt 16 ] || [ "${#CURRENT_SESSION_SECRET}" -lt 32 ]; then
+  DASHBOARD_PASSWORD=$(openssl rand -hex 16)
+  DASHBOARD_SESSION_SECRET=$(openssl rand -hex 32)
+  UPDATED_ENV=$(mktemp)
+  awk '
+    !/^[[:space:]]*DASHBOARD_PASSWORD=/ &&
+    !/^[[:space:]]*DASHBOARD_SESSION_SECRET=/
+  ' .env > "$UPDATED_ENV"
+  {
+    printf '\nDASHBOARD_PASSWORD=%s\n' "$DASHBOARD_PASSWORD"
+    printf 'DASHBOARD_SESSION_SECRET=%s\n' "$DASHBOARD_SESSION_SECRET"
+  } >> "$UPDATED_ENV"
+  cat "$UPDATED_ENV" > .env
+  rm "$UPDATED_ENV"
+  chmod 600 .env
+  printf '\n%s\n' 'Generated dashboard credentials; save them somewhere private:'
+  printf 'Dashboard password: %s\n' "$DASHBOARD_PASSWORD"
+  printf 'Dashboard session secret: %s\n\n' "$DASHBOARD_SESSION_SECRET"
+  unset CURRENT_PASSWORD CURRENT_SESSION_SECRET DASHBOARD_PASSWORD DASHBOARD_SESSION_SECRET
+else
+  unset CURRENT_PASSWORD CURRENT_SESSION_SECRET
+fi
+
 if [ ! -d node_modules ]; then
   npm install
 fi
