@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { io } from 'socket.io-client'
-import { getDashboardToken, signOutDashboard } from '../api/client'
+import { getStoredToken, signOutDashboard } from '../api/client'
 
 // Local development socket connection
 const SOCKET_URL = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/+$/, '')
@@ -13,30 +13,24 @@ export function useSocket() {
   const [messages, setMessages] = useState([])
 
   useEffect(() => {
-    console.log('[Socket] Connecting to:', SOCKET_URL)
-    
     const socket = io(SOCKET_URL, {
       reconnection: true,
-      reconnectionDelay: 1000,      // Faster reconnection (was 2000)
-      reconnectionAttempts: 20,     // More attempts (was 10)
-      timeout: 20000,               // Connection timeout
-      transports: ['websocket', 'polling'],  // Try both
-      upgrade: true,                // Allow transport upgrades
-      rememberUpgrade: true,        // Remember successful upgrade
-      path: '/socket.io/',          // Explicit path
-      auth: async callback => {
-        callback({ token: await getDashboardToken() })
-      },
+      reconnectionDelay: 1000,
+      reconnectionAttempts: 20,
+      timeout: 20000,
+      transports: ['websocket', 'polling'],
+      upgrade: true,
+      rememberUpgrade: true,
+      path: '/socket.io/',
+      auth: { token: getStoredToken() },
     })
     socketRef.current = socket
 
     socket.on('connect', () => {
       setConnected(true)
-      console.log('[Socket] ✅ Connected to SK Agent backend')
     })
 
     socket.on('connect_error', (error) => {
-      console.error('[Socket] Connection error:', error.message)
       setConnected(false)
       if (error.message === 'unauthorized') {
         signOutDashboard()
@@ -44,19 +38,7 @@ export function useSocket() {
       }
     })
 
-    socket.on('disconnect', (reason) => {
-      setConnected(false)
-      console.log('[Socket] Disconnected:', reason)
-    })
-
-    socket.on('reconnect_attempt', (attemptNumber) => {
-      console.log(`[Socket] Reconnection attempt ${attemptNumber}...`)
-    })
-
-    socket.on('reconnect', (attemptNumber) => {
-      console.log(`[Socket] ✅ Reconnected after ${attemptNumber} attempts`)
-      setConnected(true)
-    })
+    socket.on('disconnect', () => setConnected(false))
 
     socket.on('status', (data) => {
       setStatus(data)
@@ -78,10 +60,7 @@ export function useSocket() {
 
     socket.on('settings_updated', () => {})
 
-    return () => { 
-      console.log('[Socket] Disconnecting...')
-      socket.disconnect() 
-    }
+    return () => { socket.disconnect() }
   }, [])
 
   return { socket: socketRef.current, connected, status, qrData, messages }

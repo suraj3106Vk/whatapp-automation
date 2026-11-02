@@ -17,6 +17,9 @@ const {
   requireDashboardAuth,
   initializeFirebaseAdmin,
   verifyFirebaseToken,
+  issueToken,
+  verifyPin,
+  verifyToken,
 } = require('./api/firebaseAuth');
 const { getUploadsPath, verifyPersistentStorage } = require('./config/storage');
 
@@ -72,16 +75,13 @@ const io = new Server(server, {
   allowEIO3: true,           // Support older clients
 });
 
-io.use(async (socket, next) => {
-  try {
-    socket.data.firebaseUser = await verifyFirebaseToken(socket.handshake.auth?.token);
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token || '';
+  if (verifyToken(token)) {
+    socket.data.authenticated = true;
     return next();
-  } catch (error) {
-    if (error.status !== 403 && !error.code?.startsWith('auth/')) {
-      console.error('[Socket.IO] Firebase token verification failed:', error.message);
-    }
-    return next(new Error(error.status === 403 ? 'forbidden' : 'unauthorized'));
   }
+  return next(new Error('unauthorized'));
 });
 
 io.on('connection', (socket) => {
@@ -97,8 +97,20 @@ io.on('connection', (socket) => {
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// ── Time-PIN login ─────────────────────────────────────────────────────────────
+app.post('/api/auth/login', (req, res) => {
+  const { pin } = req.body || {};
+  if (!pin) return res.status(400).json({ success: false, error: 'PIN is required' });
+  if (!verifyPin(pin)) {
+    return res.status(401).json({ success: false, error: 'Incorrect PIN. Use the current time as HHMM (e.g. 01:22 → 0122).' });
+  }
+  const token = issueToken();
+  return res.json({ success: true, token });
+});
+
 app.get('/api/auth/verify', requireDashboardAuth, (req, res) => {
-  res.json({ success: true, authenticated: true, email: req.firebaseUser.email });
+  res.json({ success: true, authenticated: true });
 });
 app.use('/api', requireDashboardAuth);
 app.use('/uploads', requireDashboardAuth, express.static(getUploadsPath()));

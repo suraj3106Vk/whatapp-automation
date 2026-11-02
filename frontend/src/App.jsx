@@ -3,21 +3,22 @@ import { Routes, Route, NavLink } from 'react-router-dom'
 import {
   MessageSquare, Settings, FolderOpen, Activity, Bot, Wifi, WifiOff, LogOut, LockKeyhole
 } from 'lucide-react'
-import { onAuthStateChanged, signInWithEmailAndPassword } from 'firebase/auth'
 import { useSocket } from './hooks/useSocket'
 import {
-  signOutDashboard,
+  loginWithPin,
   verifyDashboardSession,
+  signOutDashboard,
+  getStoredToken,
 } from './api/client'
-import { firebaseAuth, isFirebaseConfigured } from './config/firebase'
 import Dashboard from './pages/Dashboard'
 import MessagesPage from './pages/MessagesPage'
 import FilesPage from './pages/FilesPage'
 import SettingsPage from './pages/SettingsPage'
 
+// ── Login screen ─────────────────────────────────────────────────────────────
+
 function LoginScreen() {
-  const [email, setEmail] = React.useState('')
-  const [password, setPassword] = React.useState('')
+  const [pin, setPin] = React.useState('')
   const [error, setError] = React.useState('')
   const [busy, setBusy] = React.useState(false)
 
@@ -26,24 +27,16 @@ function LoginScreen() {
     setError('')
     setBusy(true)
     try {
-      if (!firebaseAuth) throw new Error('Firebase is not configured in the Netlify/Vercel environment.')
-      await signInWithEmailAndPassword(firebaseAuth, email.trim(), password)
-      await verifyDashboardSession()
-    } catch (loginError) {
-      if (loginError.response?.status === 403) {
-        setError('This Firebase account is not allowlisted as a dashboard admin.')
-      } else if (loginError.response) {
-        setError(loginError.response.data?.error || 'The backend rejected this sign-in.')
-      } else if (loginError.code === 'auth/invalid-credential' ||
-                 loginError.code === 'auth/user-not-found' ||
-                 loginError.code === 'auth/wrong-password') {
-        setError('Email or password is incorrect.')
-      } else if (loginError.code?.startsWith('auth/')) {
-        setError(loginError.message)
-      } else if (!loginError.response) {
-        setError('Cannot reach the backend. Check that VITE_API_URL is set correctly in the Netlify environment variables and redeploy.')
+      await loginWithPin(pin.trim())
+      // Reload triggers App's session check which will set authenticated=true
+      window.location.reload()
+    } catch (err) {
+      if (!err.response) {
+        setError('Cannot reach the backend. Check that VITE_API_URL is correct and the backend is running.')
+      } else if (err.response?.status === 401) {
+        setError('Incorrect PIN. Use current time as HHMM — e.g. if it is 01:22, enter 0122.')
       } else {
-        setError(loginError.message || 'The backend rejected the sign-in.')
+        setError(err.response?.data?.error || err.message)
       }
     } finally {
       setBusy(false)
@@ -57,39 +50,40 @@ function LoginScreen() {
           <div className="w-12 h-12 mx-auto rounded-xl bg-whatsapp-green flex items-center justify-center">
             <LockKeyhole size={23} className="text-white" />
           </div>
-          <h1 className="mt-4 text-xl font-bold text-white">SK Agent Sign In</h1>
-          <p className="mt-1 text-sm text-gray-400">Sign in with your Firebase admin account.</p>
-        </div>
-        <div>
-          <label htmlFor="dashboard-email" className="block text-sm text-gray-300 mb-2">Email</label>
-          <input
-            id="dashboard-email"
-            type="email"
-            autoComplete="username"
-            value={email}
-            onChange={event => setEmail(event.target.value)}
-            required
-            className="mb-4 w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white outline-none focus:border-whatsapp-green"
-          />
-          <label htmlFor="dashboard-password" className="block text-sm text-gray-300 mb-2">Password</label>
-          <input
-            id="dashboard-password"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={event => setPassword(event.target.value)}
-            required
-            className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white outline-none focus:border-whatsapp-green"
-          />
-        </div>
-        {!isFirebaseConfigured && (
-          <p role="alert" className="text-sm text-red-400">
-            Firebase client settings are missing. Configure the VITE_FIREBASE_* build variables and redeploy.
+          <h1 className="mt-4 text-xl font-bold text-white">SK Agent</h1>
+          <p className="mt-2 text-sm text-gray-400">
+            Enter today's access PIN
           </p>
-        )}
+          <p className="mt-1 text-xs text-gray-600">
+            PIN = current time in HHMM&nbsp;&nbsp;·&nbsp;&nbsp;e.g. 01:22 → <span className="font-mono text-gray-500">0122</span>
+          </p>
+        </div>
+
+        <div>
+          <label htmlFor="dashboard-pin" className="block text-sm text-gray-300 mb-2">Access PIN</label>
+          <input
+            id="dashboard-pin"
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]{4}"
+            maxLength={4}
+            placeholder="HHMM"
+            autoComplete="off"
+            value={pin}
+            onChange={e => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+            required
+            className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white text-center text-2xl font-mono tracking-widest outline-none focus:border-whatsapp-green"
+          />
+        </div>
+
         {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
-        <button type="submit" disabled={busy || !email || !password || !isFirebaseConfigured} className="btn-primary w-full disabled:opacity-50">
-          {busy ? 'Signing in...' : 'Sign in'}
+
+        <button
+          type="submit"
+          disabled={busy || pin.length !== 4}
+          className="btn-primary w-full disabled:opacity-50"
+        >
+          {busy ? 'Verifying...' : 'Sign in'}
         </button>
       </form>
     </div>
@@ -102,6 +96,7 @@ export default function App() {
 
   React.useEffect(() => {
     let active = true
+
     const expireSession = () => {
       signOutDashboard()
       setAuthenticated(false)
@@ -109,31 +104,20 @@ export default function App() {
     }
     window.addEventListener('dashboard:unauthorized', expireSession)
 
-    if (!firebaseAuth) {
+    // Check if we have a stored token that the backend still accepts
+    const token = getStoredToken()
+    if (!token) {
       setCheckingSession(false)
-    } else {
-      const unsubscribe = onAuthStateChanged(firebaseAuth, async user => {
-        if (!user) {
-          setAuthenticated(false)
-          setCheckingSession(false)
-          return
-        }
-        try {
-          await verifyDashboardSession()
-          if (active) setAuthenticated(true)
-        } catch {
-          await signOutDashboard()
-          if (active) setAuthenticated(false)
-        } finally {
-          if (active) setCheckingSession(false)
-        }
-      })
-      return () => {
-        active = false
-        unsubscribe()
-        window.removeEventListener('dashboard:unauthorized', expireSession)
-      }
+      return () => window.removeEventListener('dashboard:unauthorized', expireSession)
     }
+
+    verifyDashboardSession()
+      .then(() => { if (active) setAuthenticated(true) })
+      .catch(() => {
+        signOutDashboard()
+        if (active) setAuthenticated(false)
+      })
+      .finally(() => { if (active) setCheckingSession(false) })
 
     return () => {
       active = false
@@ -142,10 +126,10 @@ export default function App() {
   }, [])
 
   if (checkingSession) {
-    return <div className="min-h-screen bg-gray-950 flex items-center justify-center text-gray-400">Checking dashboard session...</div>
+    return <div className="min-h-screen bg-gray-950 flex items-center justify-center text-gray-400">Checking session...</div>
   }
   if (!authenticated) return <LoginScreen />
-  return <DashboardApp onSignOut={signOutDashboard} />
+  return <DashboardApp onSignOut={() => { signOutDashboard(); window.location.reload() }} />
 }
 
 function DashboardApp({ onSignOut }) {

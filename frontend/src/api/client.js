@@ -1,30 +1,32 @@
 import axios from 'axios'
-import { signOut } from 'firebase/auth'
-import { firebaseAuth } from '../config/firebase'
 
-// Local development API endpoint
 const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/+$/, '')
 const BASE = `${API_URL}/api`
-
 const SOCKET_URL = API_URL
 
+const TOKEN_KEY = 'sk_dashboard_token'
+
+// ── Token helpers ─────────────────────────────────────────────────────────────
+export function getStoredToken() {
+  return localStorage.getItem(TOKEN_KEY) || ''
+}
+
+function storeToken(token) {
+  localStorage.setItem(TOKEN_KEY, token)
+}
+
+export function clearToken() {
+  localStorage.removeItem(TOKEN_KEY)
+}
+
+// ── Axios instance ────────────────────────────────────────────────────────────
 const api = axios.create({
   baseURL: BASE,
   timeout: 15000,
 })
 
-export async function getDashboardToken() {
-  return firebaseAuth?.currentUser?.getIdToken() || ''
-}
-
-export const verifyDashboardSession = () => api.get('/auth/verify').then(r => r.data)
-
-export function signOutDashboard() {
-  return firebaseAuth?.currentUser ? signOut(firebaseAuth) : Promise.resolve()
-}
-
-api.interceptors.request.use(async (config) => {
-  const token = await getDashboardToken()
+api.interceptors.request.use(config => {
+  const token = getStoredToken()
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
@@ -33,7 +35,7 @@ api.interceptors.response.use(
   response => response,
   error => {
     if (error.response?.status === 401) {
-      signOutDashboard()
+      clearToken()
       window.dispatchEvent(new Event('dashboard:unauthorized'))
     }
     return Promise.reject(error)
@@ -41,6 +43,32 @@ api.interceptors.response.use(
 )
 
 export { SOCKET_URL }
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
+/**
+ * Login with time-based PIN.
+ * PIN = current time in HHMM format (e.g. 01:22 → "0122").
+ */
+export async function loginWithPin(pin) {
+  const res = await axios.post(`${BASE}/auth/login`, { pin }, { timeout: 10000 })
+  storeToken(res.data.token)
+  return res.data
+}
+
+export async function verifyDashboardSession() {
+  return api.get('/auth/verify').then(r => r.data)
+}
+
+export function signOutDashboard() {
+  clearToken()
+  return Promise.resolve()
+}
+
+// Kept as no-op for compatibility
+export async function getDashboardToken() {
+  return getStoredToken()
+}
 
 // ── Status & QR ───────────────────────────────────────────────────────────────
 export const getStatus = () => api.get('/status').then(r => r.data)
