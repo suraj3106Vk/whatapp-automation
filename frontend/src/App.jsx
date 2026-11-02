@@ -41,7 +41,7 @@ function LoginScreen() {
       } else if (loginError.code?.startsWith('auth/')) {
         setError(loginError.message)
       } else if (!loginError.response) {
-        setError('Backend is unreachable. Set Netlify VITE_API_URL to your live Termux HTTPS tunnel URL, then redeploy the site.')
+        setError('Cannot reach the backend. Check that VITE_API_URL is set correctly in the Netlify environment variables and redeploy.')
       } else {
         setError(loginError.message || 'The backend rejected the sign-in.')
       }

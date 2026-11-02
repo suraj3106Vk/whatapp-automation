@@ -1,6 +1,9 @@
 const { DisconnectReason } = require('@whiskeysockets/baileys');
 
-const BACKOFF_MS = [1000, 2000, 5000, 10000, 20000, 30000];
+// Backoff sequence for reconnects.
+// Starts at 3s (not 1s) so a flapping mobile connection doesn't hammer
+// the WhatsApp servers and get rate-limited.  Caps at 60s after 6 retries.
+const BACKOFF_MS = [3000, 5000, 10000, 20000, 40000, 60000];
 
 function isLoggedOut(error) {
   return error?.output?.statusCode === DisconnectReason.loggedOut ||

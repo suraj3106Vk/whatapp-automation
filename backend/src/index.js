@@ -24,26 +24,30 @@ const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || '0.0.0.0';
 
 // Allowed origins for CORS
+// Add FRONTEND_URL env-var on Railway when you use a custom domain.
 const ORIGINS = [
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost:3000',
   'http://127.0.0.1:5173',
   'http://127.0.0.1:5174',
-  'https://whatapp.netlify.app',         // Netlify production
-  'http://whatapp.netlify.app',
-  'https://whatappai.netlify.app',       // Current Netlify production
-  'http://whatappai.netlify.app',
-  'https://whatsapp.vercel.app',         // Vercel production
-  'http://whatsapp.vercel.app',
-  process.env.FRONTEND_URL,              // custom domain if set
+  // ── Netlify sites ──────────────────────────────────────────────────────────
+  'https://whatapp.netlify.app',
+  'https://whatappai.netlify.app',
+  'https://whatappsa.netlify.app',       // current live site (seen in browser bar)
+  // ── Vercel sites ──────────────────────────────────────────────────────────
+  'https://whatsapp.vercel.app',
+  // ── Custom domain (set FRONTEND_URL on Railway if needed) ─────────────────
+  process.env.FRONTEND_URL,
 ].filter(Boolean);
 
 function isAllowedOrigin(origin) {
-  if (!origin) return true;
-  return ORIGINS.includes(origin) || 
-         /^https:\/\/[a-z0-9-]+\.netlify\.app$/i.test(origin) ||
-         /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin);
+  if (!origin) return true;                            // same-origin / curl / health-checks
+  if (ORIGINS.includes(origin)) return true;
+  // Allow any *.netlify.app or *.vercel.app deploy preview automatically
+  if (/^https:\/\/[a-z0-9-]+\.netlify\.app$/i.test(origin)) return true;
+  if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin)) return true;
+  return false;
 }
 
 const corsOptions = {

@@ -357,15 +357,18 @@ async function startSocket() {
       markOnlineOnConnect: false,
       syncFullHistory: false,
       generateHighQualityLinkPreview: false,
-      // Connection resilience — cloud hosts (Railway etc) proxy the
-      // websocket, and idle/slow connections get dropped more readily than
-      // on a home network. These keep the link alive and give slow
-      // handshakes room instead of timing out mid-pairing, which is what
-      // caused repeated QR-regeneration loops.
-      keepAliveIntervalMs: 20_000,
-      connectTimeoutMs: 60_000,
-      defaultQueryTimeoutMs: 60_000,
-      retryRequestDelayMs: 2_000,
+      // Connection resilience settings.
+      // keepAliveIntervalMs: send a ping every 15s so Android Wi-Fi/mobile
+      //   NAT doesn't kill the idle TCP connection (common cause of 408).
+      // connectTimeoutMs / defaultQueryTimeoutMs: raised for mobile networks
+      //   that are slower than cloud servers; avoids 408 "timedOut" on startup.
+      // getMessage: return undefined so Baileys skips trying to re-fetch
+      //   old messages from the store (which causes startup timeouts on mobile).
+      keepAliveIntervalMs: 15_000,
+      connectTimeoutMs: 120_000,
+      defaultQueryTimeoutMs: 120_000,
+      retryRequestDelayMs: 3_000,
+      getMessage: async () => undefined,
     });
     socket = activeSocket;
     activeSocket.ev.on('creds.update', saveCreds);

@@ -1,96 +1,106 @@
-#!/data/data/com.termux/files/usr/bin/sh
-set -eu
+#!/data/data/com.termux/files/usr/bin/bash
+# ── SK Agent — Termux one-shot launcher ─────────────────────────────────────
+# Usage (from ~/whatapp-automation):
+#   bash termux-start.sh
+#
+# What it does:
+#   1. Kills any old backend or tunnel still on port 3001
+#   2. Installs/updates npm deps (silently)
+#   3. Starts the backend in background
+#   4. Waits for port 3001 to be ready
+#   5. Starts cloudflared tunnel (http2 — no QUIC timeouts on mobile)
+#   6. Waits and prints your live HTTPS tunnel URL
+#   7. Prints "Update VITE_API_URL in Netlify to: <url>"
 
-MIN_NODE_MAJOR=20
-NODE_MAJOR=$(node -p "Number(process.versions.node.split('.')[0])")
-if [ "$NODE_MAJOR" -lt "$MIN_NODE_MAJOR" ]; then
-  printf 'Node.js 20 or newer is required; found %s.\n' "$(node --version)" >&2
-  exit 1
-fi
+set -e
 
-cd "$HOME/whatapp-automation/backend"
+BACKEND_DIR="$HOME/whatapp-automation/backend"
+LOG_FILE="$HOME/cf-tunnel.log"
+NODE_LOG="$HOME/sk-backend.log"
 
-if [ ! -f .env ]; then
-  printf '%s\n' 'Create or paste newly rotated provider keys. Input is hidden.'
-  printf '%s' 'Fresh Groq API key(s), comma-separated (leave blank if unused): '
-  stty -echo
-  IFS= read -r GROQ_KEYS || true
-  stty echo
-  printf '\n'
+echo ""
+echo "╔══════════════════════════════════════════════╗"
+echo "║         SK Agent — Termux Launcher           ║"
+echo "╚══════════════════════════════════════════════╝"
+echo ""
 
-  printf '%s' 'Fresh Gemini API key(s), comma-separated (leave blank if unused): '
-  stty -echo
-  IFS= read -r GEMINI_KEYS || true
-  stty echo
-  printf '\n'
+# ── Step 1: Kill any existing backend on port 3001 ────────────────────────────
+echo "→ Cleaning up old processes..."
+pkill -f "node src/index.js" 2>/dev/null || true
+pkill -f "cloudflared tunnel" 2>/dev/null || true
+sleep 1
 
-  if [ -z "$GROQ_KEYS" ] && [ -z "$GEMINI_KEYS" ]; then
-    printf '%s\n' 'Enter at least one provider API key to continue.' >&2
+# ── Step 2: Install deps ──────────────────────────────────────────────────────
+echo "→ Installing dependencies..."
+cd "$BACKEND_DIR"
+npm install --omit=dev --silent 2>/dev/null || npm install --omit=dev
+
+# ── Step 3: Start backend ─────────────────────────────────────────────────────
+echo "→ Starting SK Agent backend..."
+nohup node src/index.js > "$NODE_LOG" 2>&1 &
+BACKEND_PID=$!
+echo "  Backend PID: $BACKEND_PID"
+
+# ── Step 4: Wait for port 3001 to open ───────────────────────────────────────
+echo "→ Waiting for backend to be ready..."
+for i in $(seq 1 30); do
+  if nc -z 127.0.0.1 3001 2>/dev/null; then
+    echo "  Backend ready (${i}s)"
+    break
+  fi
+  sleep 1
+  if [ $i -eq 30 ]; then
+    echo "  ERROR: Backend didn't start in 30s. Check logs:"
+    echo "  tail -30 $NODE_LOG"
+    tail -20 "$NODE_LOG"
     exit 1
   fi
+done
 
-  printf '%s' 'Firebase admin email (create and verify this user in Firebase Console): '
-  IFS= read -r FIREBASE_ADMIN_EMAIL
-  if [ -z "$FIREBASE_ADMIN_EMAIL" ]; then
-    printf '%s\n' 'A Firebase admin email is required.' >&2
-    exit 1
+# ── Step 5: Start cloudflared (http2 — stable on mobile) ────────────────────
+echo "→ Starting Cloudflare tunnel (http2 mode)..."
+rm -f "$LOG_FILE"
+nohup cloudflared tunnel --url http://127.0.0.1:3001 --protocol http2 > "$LOG_FILE" 2>&1 &
+TUNNEL_PID=$!
+
+# ── Step 6: Extract tunnel URL ───────────────────────────────────────────────
+echo "→ Waiting for tunnel URL..."
+TUNNEL_URL=""
+for i in $(seq 1 30); do
+  sleep 1
+  TUNNEL_URL=$(grep -m1 'trycloudflare.com' "$LOG_FILE" 2>/dev/null | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' || true)
+  if [ -n "$TUNNEL_URL" ]; then
+    break
   fi
+done
 
-  umask 077
-  {
-    printf 'PORT=3001\n'
-    printf 'HOST=127.0.0.1\n'
-    printf 'NODE_ENV=production\n'
-    printf 'OWNER_NAME=Suraj Zalke\n'
-    printf 'OWNER_SHORT_NAME=Suraj\n'
-    printf 'DATA_PATH=%s/sk-agent-data\n' "$HOME"
-    printf 'GROQ_API_KEYS=%s\n' "$GROQ_KEYS"
-    printf 'GEMINI_API_KEYS=%s\n' "$GEMINI_KEYS"
-    printf 'FIREBASE_PROJECT_ID=whtapp-automation\n'
-    printf 'FIREBASE_ADMIN_EMAILS=%s\n' "$FIREBASE_ADMIN_EMAIL"
-  } > .env
-  chmod 600 .env
-
-  unset GROQ_KEYS GEMINI_KEYS FIREBASE_ADMIN_EMAIL
+# ── Step 7: Print results ─────────────────────────────────────────────────────
+echo ""
+echo "╔══════════════════════════════════════════════════════════════╗"
+if [ -n "$TUNNEL_URL" ]; then
+echo "║  ✅  SK AGENT IS LIVE                                        ║"
+echo "╠══════════════════════════════════════════════════════════════╣"
+printf  "║  🌐  URL: %-50s ║\n" "$TUNNEL_URL"
+echo "╠══════════════════════════════════════════════════════════════╣"
+echo "║  📋  Next step:                                              ║"
+echo "║  1. Open: frontend/.env.production (on your PC)             ║"
+echo "║  2. Set:  VITE_API_URL=$TUNNEL_URL"
+echo "║  3. Git push → Netlify auto-redeploys                       ║"
 else
-  printf '%s\n' 'Using the existing backend/.env; secrets will not be displayed.'
+echo "║  ⚠️  Tunnel URL not detected yet — check log:               ║"
+printf  "║  tail -20 %-49s ║\n" "$LOG_FILE"
 fi
+echo "╠══════════════════════════════════════════════════════════════╣"
+echo "║  📄  Backend log:  tail -f ~/sk-backend.log                 ║"
+echo "║  📄  Tunnel log:   tail -f ~/cf-tunnel.log                  ║"
+echo "║  🛑  Stop all:     pkill -f 'node src'; pkill -f cloudflared║"
+echo "╚══════════════════════════════════════════════════════════════╝"
+echo ""
 
-set_env_value() {
-  key=$1
-  value=$2
-  updated_env=$(mktemp)
-  awk -v key="$key" 'index($0, key "=") != 1' .env > "$updated_env"
-  printf '%s=%s\n' "$key" "$value" >> "$updated_env"
-  cat "$updated_env" > .env
-  rm "$updated_env"
-  chmod 600 .env
-}
-
-sed -i '/^DASHBOARD_PASSWORD=/d; /^DASHBOARD_SESSION_SECRET=/d; /^GOOGLE_APPLICATION_CREDENTIALS=/d' .env
-chmod 600 .env
-
-FIREBASE_PROJECT_ID=$(sed -n 's/^FIREBASE_PROJECT_ID=//p' .env | tail -n 1)
-if [ -z "$FIREBASE_PROJECT_ID" ]; then
-  FIREBASE_PROJECT_ID=whtapp-automation
-  set_env_value FIREBASE_PROJECT_ID "$FIREBASE_PROJECT_ID"
+# Save URL to file for easy copy
+if [ -n "$TUNNEL_URL" ]; then
+  echo "$TUNNEL_URL" > "$HOME/sk-tunnel-url.txt"
+  echo "  URL also saved to: ~/sk-tunnel-url.txt"
+  echo "  cat ~/sk-tunnel-url.txt"
 fi
-
-FIREBASE_ADMIN_EMAILS=$(sed -n 's/^FIREBASE_ADMIN_EMAILS=//p' .env | tail -n 1)
-if [ -z "$FIREBASE_ADMIN_EMAILS" ]; then
-  printf '%s' 'Firebase admin email (create and verify this user in Firebase Console): '
-  IFS= read -r FIREBASE_ADMIN_EMAILS
-  if [ -z "$FIREBASE_ADMIN_EMAILS" ]; then
-    printf '%s\n' 'A Firebase admin email is required.' >&2
-    exit 1
-  fi
-  set_env_value FIREBASE_ADMIN_EMAILS "$FIREBASE_ADMIN_EMAILS"
-fi
-
-git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
-npm install --allow-git=all
-
-mkdir -p "$HOME/sk-agent-data"
-printf 'Persistent WhatsApp session/data directory: %s/sk-agent-data\n' "$HOME"
-printf '%s\n' 'Starting backend. Keep Termux open; press Ctrl+C to stop.'
-exec npm start
+echo ""
